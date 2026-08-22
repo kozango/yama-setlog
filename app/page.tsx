@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Ratio = "16:9" | "9:16" | "1:1";
 type GpxStyle = "line" | "location" | "profile";
@@ -11,6 +11,8 @@ type MediaItem = {
   name: string;
   detail: string;
   selected: boolean;
+  kind: "video" | "image";
+  url?: string;
 };
 
 const fullRoute = "M20 270 L23 264 L25 260 L22 255 L22 249 L22 243 L25 238 L29 233 L30 227 L34 222 L37 217 L41 213 L43 209 L43 204 L45 198 L43 193 L45 188 L46 182 L47 177 L48 171 L48 165 L51 161 L55 157 L58 152 L57 147 L61 145 L65 143 L70 142 L75 139 L80 139 L83 135 L88 133 L90 130 L95 126 L99 124 L93 127 L93 123 L90 119 L87 114 L82 111 L78 108 L74 104 L70 101 L65 97 L61 94 L58 89 L59 84 L59 76 L63 73 L68 72 L73 72 L77 71 L81 66 L86 64 L90 68 L96 70 L101 68 L106 69 L112 70 L117 68 L122 65 L127 61 L132 58 L135 54 L135 48 L136 42 L138 36 L138 30 L140 26 L144 24 L150 21 L156 20 L159 18 L165 16 L171 16 L176 18 L182 21 L188 21 L193 24 L198 27 L202 32 L204 38 L205 43 L210 47 L213 53 L217 56 L219 62 L219 68 L221 74 L227 75 L230 77 L227 80 L222 83 L219 88 L217 94 L213 98 L208 102 L207 108 L206 114 L205 120 L206 126 L209 131 L210 137 L211 143 L211 149 L208 153 L205 158 L201 162 L202 168 L200 174 L199 180 L198 186 L200 191 L198 193 L195 199 L191 202 L186 206 L182 211 L178 216 L176 221 L175 227 L174 233 L170 238 L167 243 L162 246 L158 250 L153 248 L147 249 L142 252 L136 255 L131 255 L125 256 L122 251 L120 246 L116 245 L110 248 L105 246 L99 246 L94 248 L88 247 L82 245 L78 241 L72 239 L66 238 L60 236 L55 235 L50 231 L45 232 L39 235 L33 235 L27 235 L24 240 L22 245 L22 251 L23 257 L24 260";
@@ -26,15 +28,6 @@ const placeLabels = [
   { name: "明神", x: 130, y: 210, type: "detail" },
 ] as const;
 
-const sampleMedia: MediaItem[] = [
-  { id: "sample-9376", name: "IMG_9376.MOV", detail: "26秒・DAY 1 08:57・位置一致", selected: true },
-  { id: "sample-9435", name: "IMG_9435.MOV", detail: "37秒・DAY 1 18:41・位置一致", selected: true },
-  { id: "sample-9443", name: "IMG_9443.MOV", detail: "17秒・DAY 1 19:07・位置一致", selected: true },
-  { id: "sample-9453", name: "IMG_9453.MOV", detail: "44秒・DAY 2 06:17・時刻一致", selected: true },
-  { id: "sample-9458", name: "IMG_9458.MOV", detail: "22秒・DAY 2 06:47・時刻一致", selected: true },
-  { id: "sample-9468", name: "IMG_9468.MOV", detail: "45秒・DAY 2 08:01・時刻一致", selected: true },
-];
-
 export default function Home() {
   const [duration, setDuration] = useState("60");
   const [ratio, setRatio] = useState<Ratio>("16:9");
@@ -43,12 +36,13 @@ export default function Home() {
   const [showMap, setShowMap] = useState(true);
   const [showLocation, setShowLocation] = useState(true);
   const [showAltitude, setShowAltitude] = useState(true);
-  const [gpxName, setGpxName] = useState("yamap_2026-07-31_05_47.gpx");
-  const [media, setMedia] = useState<MediaItem[]>(sampleMedia);
-  const [previewId, setPreviewId] = useState(sampleMedia[3].id);
+  const [gpxName, setGpxName] = useState("");
+  const [media, setMedia] = useState<MediaItem[]>([]);
+  const [previewId, setPreviewId] = useState("");
   const [mediaOpen, setMediaOpen] = useState(true);
   const [generationState, setGenerationState] = useState<GenerationState>("idle");
   const generationRun = useRef(0);
+  const objectUrls = useRef<string[]>([]);
 
   const selectedMedia = useMemo(() => media.filter(item => item.selected), [media]);
   const previewMedia = selectedMedia.find(item => item.id === previewId) ?? selectedMedia[0];
@@ -62,6 +56,8 @@ export default function Home() {
   const generationProgress = generationState === "checking" ? 25 : generationState === "matching" ? 58 : generationState === "composing" ? 82 : generationState === "ready" ? 100 : 0;
   const generationCopy = generationState === "checking" ? "対象動画を確認中" : generationState === "matching" ? "GPXと撮影時刻を照合中" : generationState === "composing" ? "構成プレビューを作成中" : generationState === "ready" ? "構成プレビューが完成しました" : "";
 
+  useEffect(() => () => objectUrls.current.forEach(url => URL.revokeObjectURL(url)), []);
+
   function readGpx(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (file) setGpxName(file.name);
@@ -70,12 +66,16 @@ export default function Home() {
   function readVideos(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
+    objectUrls.current.forEach(url => URL.revokeObjectURL(url));
     const next = files.map((file, index) => ({
       id: `${file.name}-${file.lastModified}-${index}`,
       name: file.name,
-      detail: `${formatBytes(file.size)}・撮影時刻を解析予定`,
+      detail: `${formatBytes(file.size)}・端末上で読み込み済み`,
       selected: true,
+      kind: file.type.startsWith("image/") ? "image" as const : "video" as const,
+      url: URL.createObjectURL(file),
     }));
+    objectUrls.current = next.map(item => item.url);
     setMedia(next);
     setPreviewId(next[0].id);
     setMediaOpen(true);
@@ -83,12 +83,16 @@ export default function Home() {
   }
 
   function generate() {
-    if (!selectedMedia.length || generationState === "checking" || generationState === "matching" || generationState === "composing") return;
+    if (!gpxName || !selectedMedia.length || generationState === "checking" || generationState === "matching" || generationState === "composing") return;
     const run = ++generationRun.current;
     setGenerationState("checking");
     window.setTimeout(() => { if (generationRun.current === run) setGenerationState("matching"); }, 650);
     window.setTimeout(() => { if (generationRun.current === run) setGenerationState("composing"); }, 1300);
-    window.setTimeout(() => { if (generationRun.current === run) setGenerationState("ready"); }, 2100);
+    window.setTimeout(() => {
+      if (generationRun.current !== run) return;
+      setPreviewId(selectedMedia[0].id);
+      setGenerationState("ready");
+    }, 2100);
   }
 
   function toggleMedia(id: string) {
@@ -104,6 +108,18 @@ export default function Home() {
   function resetGeneration() {
     generationRun.current += 1;
     setGenerationState("idle");
+  }
+
+  function movePreview(direction: -1 | 1) {
+    if (selectedMedia.length < 2 || !previewMedia) return;
+    const current = selectedMedia.findIndex(item => item.id === previewMedia.id);
+    const next = (current + direction + selectedMedia.length) % selectedMedia.length;
+    setPreviewId(selectedMedia[next].id);
+  }
+
+  function updateDuration(id: string, seconds: number) {
+    if (!Number.isFinite(seconds)) return;
+    setMedia(items => items.map(item => item.id === id && item.url ? { ...item, detail: `${formatDuration(seconds)}・端末上で再生可能` } : item));
   }
 
   return (
@@ -128,8 +144,8 @@ export default function Home() {
             <div className="section-heading"><h2>1. 素材</h2><span>自動照合</span></div>
             <label className="upload-row">
               <span className="upload-icon">⌁</span>
-              <span className="upload-copy"><strong>{gpxName}</strong><small>GPXを選択・26.5 km・1泊2日</small></span>
-              <span className="complete">✓</span>
+              <span className="upload-copy"><strong>{gpxName || "GPXを追加"}</strong><small>{gpxName ? "端末上で読み込み済み" : ".gpxファイルを選択"}</small></span>
+              {gpxName ? <span className="complete">✓</span> : <span className="choose-file">選択</span>}
               <input type="file" accept=".gpx,application/gpx+xml" onChange={readGpx} />
             </label>
             <label className="upload-row">
@@ -204,15 +220,16 @@ export default function Home() {
             <span>いま確認している動画</span>
             <strong>{previewMedia?.name ?? "動画を選択してください"}</strong>
             {previewMedia && <small>{selectedMedia.findIndex(item => item.id === previewMedia.id) + 1} / {selectedMedia.length}</small>}
+            <div className="preview-nav"><button type="button" onClick={() => movePreview(-1)} disabled={selectedMedia.length < 2} aria-label="前の対象動画">←</button><button type="button" onClick={() => movePreview(1)} disabled={selectedMedia.length < 2} aria-label="次の対象動画">→</button></div>
           </div>
           <div className="stage">
             <div className={`player ratio-${ratio.replace(":", "-")} style-${gpxStyle}`}>
-              <div className="scene" aria-hidden="true"><span className="sun" /><span className="mountain far" /><span className="mountain near" /><span className="ridge" /></div>
+              {previewMedia?.url ? previewMedia.kind === "video" ? <video className="uploaded-media" key={previewMedia.url} src={previewMedia.url} controls playsInline autoPlay muted onEnded={() => movePreview(1)} onLoadedMetadata={event => updateDuration(previewMedia.id, event.currentTarget.duration)} /> : <img className="uploaded-media" src={previewMedia.url} alt={previewMedia.name} /> : <><div className="scene" aria-hidden="true"><span className="sun" /><span className="mountain far" /><span className="mountain near" /><span className="ridge" /></div><div className="sample-notice">まだ動画がありません。「写真・動画を追加」から実ファイルを選んでください。</div></>}
               <div className="movie-title">山せとろぐ（仮）｜前穂・奥穂</div>
-              {showMap && gpxStyle === "line" && <RouteOverlay labels={labels} />}
-              {showLocation && gpxStyle !== "profile" && <div className={gpxStyle === "location" ? "location-stamp large" : "location-stamp"}><small>現在地｜DAY 2・06:17</small><strong>穂高岳山荘</strong></div>}
-              {showAltitude && gpxStyle !== "profile" && <div className="altitude">3,110 m</div>}
-              {gpxStyle === "profile" && <ElevationProfile />}
+              {gpxName && showMap && gpxStyle === "line" && <RouteOverlay labels={labels} />}
+              {gpxName && showLocation && gpxStyle !== "profile" && <div className={gpxStyle === "location" ? "location-stamp large" : "location-stamp"}><small>現在地｜DAY 2・06:17</small><strong>穂高岳山荘</strong></div>}
+              {gpxName && showAltitude && gpxStyle !== "profile" && <div className="altitude">3,110 m</div>}
+              {gpxName && gpxStyle === "profile" && <ElevationProfile />}
             </div>
           </div>
           <div className="playback">
@@ -223,7 +240,7 @@ export default function Home() {
               <div className="generation-progress"><i style={{ width: `${generationProgress}%` }} /></div>
               {generationState === "ready" && <p>{selectedMedia.length}本の対象動画で{duration === "auto" ? "42秒" : `${duration}秒`}の構成案を作りました。</p>}
             </div>}
-            <div className="actions"><span>{selectedMedia.length ? `対象 ${selectedMedia.length}本・完了まで約2秒` : "動画を1本以上選択してください"}</span><button type="button" onClick={generate} disabled={!selectedMedia.length || generationBusy}>{generationBusy ? generationCopy : generationState === "ready" ? "設定を変えて作り直す" : "構成プレビューを作る"}</button></div>
+            <div className="actions"><span>{!gpxName ? "GPXを選択してください" : selectedMedia.length ? `対象 ${selectedMedia.length}本・完了まで約2秒` : "動画を1本以上選択してください"}</span><button type="button" onClick={generate} disabled={!gpxName || !selectedMedia.length || generationBusy}>{generationBusy ? generationCopy : generationState === "ready" ? "設定を変えて作り直す" : "構成プレビューを作る"}</button></div>
           </div>
         </section>
       </div>
@@ -234,6 +251,13 @@ export default function Home() {
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDuration(seconds: number) {
+  const rounded = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(rounded / 60);
+  const rest = rounded % 60;
+  return minutes ? `${minutes}:${String(rest).padStart(2, "0")}` : `${rest}秒`;
 }
 
 function Toggle({ label, note, checked, onChange }: { label: string; note: string; checked: boolean; onChange: (value: boolean) => void }) {
