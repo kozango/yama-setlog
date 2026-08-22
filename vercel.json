@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "vinext build --prerender-all && cp -R dist/server/prerendered-routes/. dist/client/",
+  "outputDirectory": "dist/client",
+  "framework": "vite"
+}

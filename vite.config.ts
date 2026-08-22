@@ -40,8 +40,14 @@ export default defineConfig(async () => {
   process.env.WRANGLER_LOG_PATH ??= ".wrangler/logs";
   process.env.MINIFLARE_REGISTRY_PATH ??= ".wrangler/registry";
 
+  // Vercel では Cloudflare ランタイムを使わず、プリレンダーした静的出力を配信する。
+  // そのため workerd に依存する Cloudflare プラグインは読み込まない。
+  const isVercel = Boolean(process.env.VERCEL);
+
   // Wrangler snapshots its log path while the Cloudflare plugin is imported.
-  const { cloudflare } = await import("@cloudflare/vite-plugin");
+  const { cloudflare } = isVercel
+    ? { cloudflare: null }
+    : await import("@cloudflare/vite-plugin");
 
   return {
     server: isCodexSeatbeltSandbox
@@ -50,10 +56,14 @@ export default defineConfig(async () => {
     plugins: [
       vinext(),
       sites(),
-      cloudflare({
-        viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
-      }),
+      ...(cloudflare
+        ? [
+            cloudflare({
+              viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
+              config: localBindingConfig,
+            }),
+          ]
+        : []),
     ],
   };
 });
