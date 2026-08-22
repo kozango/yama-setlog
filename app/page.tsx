@@ -1,10 +1,17 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useMemo, useRef, useState } from "react";
 
 type Ratio = "16:9" | "9:16" | "1:1";
 type GpxStyle = "line" | "location" | "profile";
 type LabelDensity = "none" | "major" | "detail";
+type GenerationState = "idle" | "checking" | "matching" | "composing" | "ready";
+type MediaItem = {
+  id: string;
+  name: string;
+  detail: string;
+  selected: boolean;
+};
 
 const fullRoute = "M20 270 L23 264 L25 260 L22 255 L22 249 L22 243 L25 238 L29 233 L30 227 L34 222 L37 217 L41 213 L43 209 L43 204 L45 198 L43 193 L45 188 L46 182 L47 177 L48 171 L48 165 L51 161 L55 157 L58 152 L57 147 L61 145 L65 143 L70 142 L75 139 L80 139 L83 135 L88 133 L90 130 L95 126 L99 124 L93 127 L93 123 L90 119 L87 114 L82 111 L78 108 L74 104 L70 101 L65 97 L61 94 L58 89 L59 84 L59 76 L63 73 L68 72 L73 72 L77 71 L81 66 L86 64 L90 68 L96 70 L101 68 L106 69 L112 70 L117 68 L122 65 L127 61 L132 58 L135 54 L135 48 L136 42 L138 36 L138 30 L140 26 L144 24 L150 21 L156 20 L159 18 L165 16 L171 16 L176 18 L182 21 L188 21 L193 24 L198 27 L202 32 L204 38 L205 43 L210 47 L213 53 L217 56 L219 62 L219 68 L221 74 L227 75 L230 77 L227 80 L222 83 L219 88 L217 94 L213 98 L208 102 L207 108 L206 114 L205 120 L206 126 L209 131 L210 137 L211 143 L211 149 L208 153 L205 158 L201 162 L202 168 L200 174 L199 180 L198 186 L200 191 L198 193 L195 199 L191 202 L186 206 L182 211 L178 216 L176 221 L175 227 L174 233 L170 238 L167 243 L162 246 L158 250 L153 248 L147 249 L142 252 L136 255 L131 255 L125 256 L122 251 L120 246 L116 245 L110 248 L105 246 L99 246 L94 248 L88 247 L82 245 L78 241 L72 239 L66 238 L60 236 L55 235 L50 231 L45 232 L39 235 L33 235 L27 235 L24 240 L22 245 L22 251 L23 257 L24 260";
 const progressRoute = "M20 270 L23 264 L25 260 L22 255 L22 249 L22 243 L25 238 L29 233 L30 227 L34 222 L37 217 L41 213 L43 209 L43 204 L45 198 L43 193 L45 188 L46 182 L47 177 L48 171 L48 165 L51 161 L55 157 L58 152 L57 147 L61 145 L65 143 L70 142 L75 139 L80 139 L83 135 L88 133 L90 130 L95 126 L99 124 L93 127 L93 123 L90 119 L87 114 L82 111 L78 108 L74 104 L70 101 L65 97 L61 94 L58 89 L59 84 L59 76 L59 83";
@@ -19,6 +26,15 @@ const placeLabels = [
   { name: "明神", x: 130, y: 210, type: "detail" },
 ] as const;
 
+const sampleMedia: MediaItem[] = [
+  { id: "sample-9376", name: "IMG_9376.MOV", detail: "26秒・DAY 1 08:57・位置一致", selected: true },
+  { id: "sample-9435", name: "IMG_9435.MOV", detail: "37秒・DAY 1 18:41・位置一致", selected: true },
+  { id: "sample-9443", name: "IMG_9443.MOV", detail: "17秒・DAY 1 19:07・位置一致", selected: true },
+  { id: "sample-9453", name: "IMG_9453.MOV", detail: "44秒・DAY 2 06:17・時刻一致", selected: true },
+  { id: "sample-9458", name: "IMG_9458.MOV", detail: "22秒・DAY 2 06:47・時刻一致", selected: true },
+  { id: "sample-9468", name: "IMG_9468.MOV", detail: "45秒・DAY 2 08:01・時刻一致", selected: true },
+];
+
 export default function Home() {
   const [duration, setDuration] = useState("60");
   const [ratio, setRatio] = useState<Ratio>("16:9");
@@ -28,14 +44,23 @@ export default function Home() {
   const [showLocation, setShowLocation] = useState(true);
   const [showAltitude, setShowAltitude] = useState(true);
   const [gpxName, setGpxName] = useState("yamap_2026-07-31_05_47.gpx");
-  const [videoCount, setVideoCount] = useState(6);
-  const [generating, setGenerating] = useState(false);
+  const [media, setMedia] = useState<MediaItem[]>(sampleMedia);
+  const [previewId, setPreviewId] = useState(sampleMedia[3].id);
+  const [mediaOpen, setMediaOpen] = useState(true);
+  const [generationState, setGenerationState] = useState<GenerationState>("idle");
+  const generationRun = useRef(0);
+
+  const selectedMedia = useMemo(() => media.filter(item => item.selected), [media]);
+  const previewMedia = selectedMedia.find(item => item.id === previewId) ?? selectedMedia[0];
 
   const totalTime = useMemo(() => {
     if (duration === "auto") return "00:42";
     const value = Number(duration);
     return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
   }, [duration]);
+  const generationBusy = generationState === "checking" || generationState === "matching" || generationState === "composing";
+  const generationProgress = generationState === "checking" ? 25 : generationState === "matching" ? 58 : generationState === "composing" ? 82 : generationState === "ready" ? 100 : 0;
+  const generationCopy = generationState === "checking" ? "対象動画を確認中" : generationState === "matching" ? "GPXと撮影時刻を照合中" : generationState === "composing" ? "構成プレビューを作成中" : generationState === "ready" ? "構成プレビューが完成しました" : "";
 
   function readGpx(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -43,13 +68,42 @@ export default function Home() {
   }
 
   function readVideos(event: ChangeEvent<HTMLInputElement>) {
-    const count = event.target.files?.length ?? 0;
-    if (count) setVideoCount(count);
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) return;
+    const next = files.map((file, index) => ({
+      id: `${file.name}-${file.lastModified}-${index}`,
+      name: file.name,
+      detail: `${formatBytes(file.size)}・撮影時刻を解析予定`,
+      selected: true,
+    }));
+    setMedia(next);
+    setPreviewId(next[0].id);
+    setMediaOpen(true);
+    resetGeneration();
   }
 
   function generate() {
-    setGenerating(true);
-    window.setTimeout(() => setGenerating(false), 1800);
+    if (!selectedMedia.length || generationState === "checking" || generationState === "matching" || generationState === "composing") return;
+    const run = ++generationRun.current;
+    setGenerationState("checking");
+    window.setTimeout(() => { if (generationRun.current === run) setGenerationState("matching"); }, 650);
+    window.setTimeout(() => { if (generationRun.current === run) setGenerationState("composing"); }, 1300);
+    window.setTimeout(() => { if (generationRun.current === run) setGenerationState("ready"); }, 2100);
+  }
+
+  function toggleMedia(id: string) {
+    setMedia(items => items.map(item => item.id === id ? { ...item, selected: !item.selected } : item));
+    resetGeneration();
+  }
+
+  function setAllMedia(selected: boolean) {
+    setMedia(items => items.map(item => ({ ...item, selected })));
+    resetGeneration();
+  }
+
+  function resetGeneration() {
+    generationRun.current += 1;
+    setGenerationState("idle");
   }
 
   return (
@@ -81,9 +135,29 @@ export default function Home() {
             <label className="upload-row">
               <span className="upload-icon warm">▶</span>
               <span className="upload-copy"><strong>写真・動画を追加</strong><small>まとめて選択できます</small></span>
-              <span className="file-count">{videoCount}本</span>
+              <span className="file-count">{selectedMedia.length}/{media.length}本</span>
               <input type="file" accept="video/*,image/*" multiple onChange={readVideos} />
             </label>
+            {media.length > 0 && <div className="media-selection">
+              <div className="media-selection-head">
+                <button type="button" className="media-disclosure" onClick={() => setMediaOpen(open => !open)} aria-expanded={mediaOpen}>
+                  <span>使用する動画</span><strong>{selectedMedia.length}本を選択中</strong><i>{mediaOpen ? "−" : "+"}</i>
+                </button>
+                {mediaOpen && <div className="media-bulk-actions"><button type="button" onClick={() => setAllMedia(true)}>すべて選択</button><button type="button" onClick={() => setAllMedia(false)}>すべて解除</button></div>}
+              </div>
+              {mediaOpen && <div className="media-list">
+                {media.map((item, index) => <div className={item.id === previewMedia?.id ? "media-item previewing" : "media-item"} key={item.id}>
+                  <label className="media-check">
+                    <input type="checkbox" checked={item.selected} onChange={() => toggleMedia(item.id)} aria-label={`${item.name}を動画に使用`} />
+                    <span className="check-mark">✓</span>
+                    <span className="media-order">{String(index + 1).padStart(2, "0")}</span>
+                    <span className="media-copy"><strong>{item.name}</strong><small>{item.detail}</small></span>
+                  </label>
+                  <button type="button" className="preview-target" disabled={!item.selected} onClick={() => setPreviewId(item.id)}>{item.id === previewMedia?.id ? "表示中" : "確認"}</button>
+                </div>)}
+              </div>}
+              {selectedMedia.length === 0 && <p className="media-warning">動画が選ばれていません。使用する動画にチェックを入れてください。</p>}
+            </div>}
           </section>
 
           <section className="setting-section">
@@ -125,7 +199,12 @@ export default function Home() {
         </aside>
 
         <section className="preview-panel">
-          <div className="preview-heading"><strong>完成イメージ</strong><span><i />{videoCount}本すべて紐づけ済み</span></div>
+          <div className="preview-heading"><strong>完成イメージ</strong><span className={selectedMedia.length ? "selection-ok" : "selection-empty"}><i />{selectedMedia.length}本を動画に使用</span></div>
+          <div className="preview-context">
+            <span>いま確認している動画</span>
+            <strong>{previewMedia?.name ?? "動画を選択してください"}</strong>
+            {previewMedia && <small>{selectedMedia.findIndex(item => item.id === previewMedia.id) + 1} / {selectedMedia.length}</small>}
+          </div>
           <div className="stage">
             <div className={`player ratio-${ratio.replace(":", "-")} style-${gpxStyle}`}>
               <div className="scene" aria-hidden="true"><span className="sun" /><span className="mountain far" /><span className="mountain near" /><span className="ridge" /></div>
@@ -139,12 +218,22 @@ export default function Home() {
           <div className="playback">
             <div className="timeline"><i /></div>
             <div className="time-row"><span>00:26</span><span>{totalTime}</span></div>
-            <div className="actions"><span>生成時間：約2分</span><button type="button" onClick={generate} disabled={generating}>{generating ? "構成を作成中…" : "この設定で動画を作る"}</button></div>
+            {generationState !== "idle" && <div className={generationState === "ready" ? "generation-status ready" : "generation-status"} role="status" aria-live="polite">
+              <div><span>{generationCopy}</span><strong>{generationProgress}%</strong></div>
+              <div className="generation-progress"><i style={{ width: `${generationProgress}%` }} /></div>
+              {generationState === "ready" && <p>{selectedMedia.length}本の対象動画で{duration === "auto" ? "42秒" : `${duration}秒`}の構成案を作りました。</p>}
+            </div>}
+            <div className="actions"><span>{selectedMedia.length ? `対象 ${selectedMedia.length}本・完了まで約2秒` : "動画を1本以上選択してください"}</span><button type="button" onClick={generate} disabled={!selectedMedia.length || generationBusy}>{generationBusy ? generationCopy : generationState === "ready" ? "設定を変えて作り直す" : "構成プレビューを作る"}</button></div>
           </div>
         </section>
       </div>
     </main>
   );
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function Toggle({ label, note, checked, onChange }: { label: string; note: string; checked: boolean; onChange: (value: boolean) => void }) {
