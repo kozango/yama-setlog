@@ -5,14 +5,15 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 type Ratio = "16:9" | "9:16" | "1:1";
 type GpxStyle = "line" | "location" | "profile";
 type LabelDensity = "none" | "major" | "detail";
-type GenerationState = "idle" | "checking" | "matching" | "composing" | "ready";
+type GenerationState = "idle" | "exporting" | "ready" | "error";
 type MediaItem = {
   id: string;
   name: string;
   detail: string;
   selected: boolean;
   kind: "video" | "image";
-  url?: string;
+  url: string;
+  file: File;
 };
 
 const fullRoute = "M20 270 L23 264 L25 260 L22 255 L22 249 L22 243 L25 238 L29 233 L30 227 L34 222 L37 217 L41 213 L43 209 L43 204 L45 198 L43 193 L45 188 L46 182 L47 177 L48 171 L48 165 L51 161 L55 157 L58 152 L57 147 L61 145 L65 143 L70 142 L75 139 L80 139 L83 135 L88 133 L90 130 L95 126 L99 124 L93 127 L93 123 L90 119 L87 114 L82 111 L78 108 L74 104 L70 101 L65 97 L61 94 L58 89 L59 84 L59 76 L63 73 L68 72 L73 72 L77 71 L81 66 L86 64 L90 68 L96 70 L101 68 L106 69 L112 70 L117 68 L122 65 L127 61 L132 58 L135 54 L135 48 L136 42 L138 36 L138 30 L140 26 L144 24 L150 21 L156 20 L159 18 L165 16 L171 16 L176 18 L182 21 L188 21 L193 24 L198 27 L202 32 L204 38 L205 43 L210 47 L213 53 L217 56 L219 62 L219 68 L221 74 L227 75 L230 77 L227 80 L222 83 L219 88 L217 94 L213 98 L208 102 L207 108 L206 114 L205 120 L206 126 L209 131 L210 137 L211 143 L211 149 L208 153 L205 158 L201 162 L202 168 L200 174 L199 180 L198 186 L200 191 L198 193 L195 199 L191 202 L186 206 L182 211 L178 216 L176 221 L175 227 L174 233 L170 238 L167 243 L162 246 L158 250 L153 248 L147 249 L142 252 L136 255 L131 255 L125 256 L122 251 L120 246 L116 245 L110 248 L105 246 L99 246 L94 248 L88 247 L82 245 L78 241 L72 239 L66 238 L60 236 L55 235 L50 231 L45 232 L39 235 L33 235 L27 235 L24 240 L22 245 L22 251 L23 257 L24 260";
@@ -41,8 +42,12 @@ export default function Home() {
   const [previewId, setPreviewId] = useState("");
   const [mediaOpen, setMediaOpen] = useState(true);
   const [generationState, setGenerationState] = useState<GenerationState>("idle");
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [generationError, setGenerationError] = useState("");
+  const [output, setOutput] = useState<{ url: string; name: string; size: number } | null>(null);
   const generationRun = useRef(0);
   const objectUrls = useRef<string[]>([]);
+  const outputUrl = useRef("");
 
   const selectedMedia = useMemo(() => media.filter(item => item.selected), [media]);
   const previewMedia = selectedMedia.find(item => item.id === previewId) ?? selectedMedia[0];
@@ -52,11 +57,13 @@ export default function Home() {
     const value = Number(duration);
     return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
   }, [duration]);
-  const generationBusy = generationState === "checking" || generationState === "matching" || generationState === "composing";
-  const generationProgress = generationState === "checking" ? 25 : generationState === "matching" ? 58 : generationState === "composing" ? 82 : generationState === "ready" ? 100 : 0;
-  const generationCopy = generationState === "checking" ? "対象動画を確認中" : generationState === "matching" ? "GPXと撮影時刻を照合中" : generationState === "composing" ? "構成プレビューを作成中" : generationState === "ready" ? "構成プレビューが完成しました" : "";
+  const generationBusy = generationState === "exporting";
+  const targetSeconds = duration === "auto" ? Math.min(60, Math.max(12, selectedMedia.length * 4)) : Number(duration);
 
-  useEffect(() => () => objectUrls.current.forEach(url => URL.revokeObjectURL(url)), []);
+  useEffect(() => () => {
+    objectUrls.current.forEach(url => URL.revokeObjectURL(url));
+    if (outputUrl.current) URL.revokeObjectURL(outputUrl.current);
+  }, []);
 
   function readGpx(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -74,6 +81,7 @@ export default function Home() {
       selected: true,
       kind: file.type.startsWith("image/") ? "image" as const : "video" as const,
       url: URL.createObjectURL(file),
+      file,
     }));
     objectUrls.current = next.map(item => item.url);
     setMedia(next);
@@ -82,17 +90,38 @@ export default function Home() {
     resetGeneration();
   }
 
-  function generate() {
-    if (!gpxName || !selectedMedia.length || generationState === "checking" || generationState === "matching" || generationState === "composing") return;
+  async function generate() {
+    if (!gpxName || !selectedMedia.length || generationBusy) return;
     const run = ++generationRun.current;
-    setGenerationState("checking");
-    window.setTimeout(() => { if (generationRun.current === run) setGenerationState("matching"); }, 650);
-    window.setTimeout(() => { if (generationRun.current === run) setGenerationState("composing"); }, 1300);
-    window.setTimeout(() => {
+    clearOutput();
+    setGenerationError("");
+    setGenerationProgress(0);
+    setGenerationState("exporting");
+    try {
+      const result = await exportMovie({
+        items: selectedMedia,
+        seconds: targetSeconds,
+        ratio,
+        gpxStyle,
+        labels,
+        showMap,
+        showLocation,
+        showAltitude,
+        isCancelled: () => generationRun.current !== run,
+        onProgress: value => { if (generationRun.current === run) setGenerationProgress(value); },
+      });
       if (generationRun.current !== run) return;
+      const url = URL.createObjectURL(result.blob);
+      outputUrl.current = url;
+      setOutput({ url, name: `yama-setlog.${result.extension}`, size: result.blob.size });
       setPreviewId(selectedMedia[0].id);
+      setGenerationProgress(100);
       setGenerationState("ready");
-    }, 2100);
+    } catch (error) {
+      if (generationRun.current !== run) return;
+      setGenerationError(error instanceof Error ? error.message : "動画を書き出せませんでした。");
+      setGenerationState("error");
+    }
   }
 
   function toggleMedia(id: string) {
@@ -107,7 +136,16 @@ export default function Home() {
 
   function resetGeneration() {
     generationRun.current += 1;
+    clearOutput();
+    setGenerationProgress(0);
+    setGenerationError("");
     setGenerationState("idle");
+  }
+
+  function clearOutput() {
+    if (outputUrl.current) URL.revokeObjectURL(outputUrl.current);
+    outputUrl.current = "";
+    setOutput(null);
   }
 
   function movePreview(direction: -1 | 1) {
@@ -220,7 +258,6 @@ export default function Home() {
             <span>いま確認している動画</span>
             <strong>{previewMedia?.name ?? "動画を選択してください"}</strong>
             {previewMedia && <small>{selectedMedia.findIndex(item => item.id === previewMedia.id) + 1} / {selectedMedia.length}</small>}
-            <div className="preview-nav"><button type="button" onClick={() => movePreview(-1)} disabled={selectedMedia.length < 2} aria-label="前の対象動画">←</button><button type="button" onClick={() => movePreview(1)} disabled={selectedMedia.length < 2} aria-label="次の対象動画">→</button></div>
           </div>
           <div className="stage">
             <div className={`player ratio-${ratio.replace(":", "-")} style-${gpxStyle}`}>
@@ -235,12 +272,13 @@ export default function Home() {
           <div className="playback">
             <div className="timeline"><i /></div>
             <div className="time-row"><span>00:26</span><span>{totalTime}</span></div>
-            {generationState !== "idle" && <div className={generationState === "ready" ? "generation-status ready" : "generation-status"} role="status" aria-live="polite">
-              <div><span>{generationCopy}</span><strong>{generationProgress}%</strong></div>
+            {generationState !== "idle" && <div className={`generation-status ${generationState}`} role="status" aria-live="polite">
+              <div><span>{generationState === "exporting" ? "完成動画を書き出しています（このタブを閉じないでください）" : generationState === "ready" ? "完成動画ができました" : "書き出しに失敗しました"}</span><strong>{generationState === "error" ? "!" : `${generationProgress}%`}</strong></div>
               <div className="generation-progress"><i style={{ width: `${generationProgress}%` }} /></div>
-              {generationState === "ready" && <p>{selectedMedia.length}本の対象動画で{duration === "auto" ? "42秒" : `${duration}秒`}の構成案を作りました。</p>}
+              {generationState === "ready" && output && <p>{formatBytes(output.size)}・{targetSeconds}秒。下のボタンから端末へ保存できます。</p>}
+              {generationState === "error" && <p>{generationError}</p>}
             </div>}
-            <div className="actions"><span>{!gpxName ? "GPXを選択してください" : selectedMedia.length ? `対象 ${selectedMedia.length}本・完了まで約2秒` : "動画を1本以上選択してください"}</span><button type="button" onClick={generate} disabled={!gpxName || !selectedMedia.length || generationBusy}>{generationBusy ? generationCopy : generationState === "ready" ? "設定を変えて作り直す" : "構成プレビューを作る"}</button></div>
+            <div className="actions"><span>{!gpxName ? "GPXを選択してください" : selectedMedia.length ? `対象 ${selectedMedia.length}本・書き出し目安 約${targetSeconds}秒` : "動画を1本以上選択してください"}</span>{generationState === "ready" && output ? <a className="primary-action" href={output.url} download={output.name}>完成動画をダウンロード</a> : <button type="button" onClick={generate} disabled={!gpxName || !selectedMedia.length || generationBusy}>{generationBusy ? `書き出し中 ${generationProgress}%` : generationState === "error" ? "もう一度書き出す" : "動画を書き出す"}</button>}</div>
           </div>
         </section>
       </div>
@@ -258,6 +296,219 @@ function formatDuration(seconds: number) {
   const minutes = Math.floor(rounded / 60);
   const rest = rounded % 60;
   return minutes ? `${minutes}:${String(rest).padStart(2, "0")}` : `${rest}秒`;
+}
+
+type ExportOptions = {
+  items: MediaItem[];
+  seconds: number;
+  ratio: Ratio;
+  gpxStyle: GpxStyle;
+  labels: LabelDensity;
+  showMap: boolean;
+  showLocation: boolean;
+  showAltitude: boolean;
+  isCancelled: () => boolean;
+  onProgress: (value: number) => void;
+};
+
+async function exportMovie(options: ExportOptions) {
+  if (typeof MediaRecorder === "undefined") throw new Error("このブラウザは端末内での動画書き出しに対応していません。ChromeまたはSafariの最新版でお試しください。");
+  const dimensions = options.ratio === "9:16" ? [540, 960] : options.ratio === "1:1" ? [720, 720] : [960, 540];
+  const canvas = document.createElement("canvas");
+  canvas.width = dimensions[0];
+  canvas.height = dimensions[1];
+  const context = canvas.getContext("2d");
+  if (!context || !("captureStream" in canvas)) throw new Error("このブラウザでは動画キャンバスを作成できません。");
+
+  const canvasStream = canvas.captureStream(24);
+  const audioContext = new AudioContext();
+  await audioContext.resume();
+  const audioDestination = audioContext.createMediaStreamDestination();
+  const stream = new MediaStream([...canvasStream.getVideoTracks(), ...audioDestination.stream.getAudioTracks()]);
+  const mimeType = pickRecordingType();
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 5_000_000 });
+  const chunks: BlobPart[] = [];
+  recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
+  const finished = new Promise<void>((resolve, reject) => {
+    recorder.onstop = () => resolve();
+    recorder.onerror = () => reject(new Error("動画レコーダーでエラーが発生しました。"));
+  });
+
+  const clipSeconds = options.seconds / options.items.length;
+  let renderedSeconds = 0;
+  recorder.start(1000);
+  try {
+    for (const item of options.items) {
+      if (options.isCancelled()) throw new Error("cancelled");
+      if (item.kind === "image") {
+        const image = await loadImage(item.url);
+        await renderSegment(clipSeconds, time => {
+          drawFrame(context, canvas, image, options);
+          renderedSeconds += time;
+          options.onProgress(Math.min(99, Math.round(renderedSeconds / options.seconds * 100)));
+        }, options.isCancelled);
+      } else {
+        const video = document.createElement("video");
+        video.src = item.url;
+        video.playsInline = true;
+        video.preload = "auto";
+        video.style.cssText = "position:fixed;width:1px;height:1px;left:-10px;bottom:-10px;opacity:.01;pointer-events:none";
+        document.body.appendChild(video);
+        try {
+          await waitForMedia(video, "loadedmetadata");
+          const source = audioContext.createMediaElementSource(video);
+          source.connect(audioDestination);
+          video.currentTime = 0;
+          try {
+            await video.play();
+          } catch {
+            video.muted = true;
+            await video.play();
+          }
+          await renderSegment(clipSeconds, time => {
+            if (video.ended || video.currentTime >= video.duration - 0.08) {
+              video.currentTime = 0;
+              void video.play().catch(() => undefined);
+            }
+            drawFrame(context, canvas, video, options);
+            renderedSeconds += time;
+            options.onProgress(Math.min(99, Math.round(renderedSeconds / options.seconds * 100)));
+          }, options.isCancelled);
+          video.pause();
+          source.disconnect();
+        } finally {
+          video.removeAttribute("src");
+          video.load();
+          video.remove();
+        }
+      }
+    }
+  } finally {
+    if (recorder.state !== "inactive") recorder.stop();
+    await finished;
+    stream.getTracks().forEach(track => track.stop());
+    await audioContext.close();
+  }
+  if (options.isCancelled()) throw new Error("cancelled");
+  const extension = mimeType.includes("mp4") ? "mp4" : "webm";
+  return { blob: new Blob(chunks, { type: mimeType }), extension };
+}
+
+function pickRecordingType() {
+  const candidates = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  return candidates.find(type => MediaRecorder.isTypeSupported(type)) ?? "video/webm";
+}
+
+function waitForMedia(media: HTMLMediaElement, eventName: "loadedmetadata") {
+  if (media.readyState >= 1) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const ready = () => { cleanup(); resolve(); };
+    const failed = () => { cleanup(); reject(new Error("選択した動画を読み込めませんでした。")); };
+    const cleanup = () => { media.removeEventListener(eventName, ready); media.removeEventListener("error", failed); };
+    media.addEventListener(eventName, ready, { once: true });
+    media.addEventListener("error", failed, { once: true });
+  });
+}
+
+function loadImage(url: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("選択した画像を読み込めませんでした。"));
+    image.src = url;
+  });
+}
+
+function renderSegment(seconds: number, draw: (elapsed: number) => void, isCancelled: () => boolean) {
+  return new Promise<void>((resolve, reject) => {
+    const started = performance.now();
+    let previous = started;
+    const frame = (now: number) => {
+      if (isCancelled()) { reject(new Error("cancelled")); return; }
+      const elapsed = (now - started) / 1000;
+      draw((now - previous) / 1000);
+      previous = now;
+      if (elapsed >= seconds) resolve();
+      else requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  });
+}
+
+function drawFrame(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, source: CanvasImageSource, options: ExportOptions) {
+  const width = canvas.width;
+  const height = canvas.height;
+  context.fillStyle = "#0b1210";
+  context.fillRect(0, 0, width, height);
+  const sourceWidth = source instanceof HTMLVideoElement ? source.videoWidth : source instanceof HTMLImageElement ? source.naturalWidth : width;
+  const sourceHeight = source instanceof HTMLVideoElement ? source.videoHeight : source instanceof HTMLImageElement ? source.naturalHeight : height;
+  const scale = Math.min(width / sourceWidth, height / sourceHeight);
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  context.drawImage(source, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+
+  context.shadowColor = "rgba(0,0,0,.7)";
+  context.shadowBlur = Math.max(5, width * .009);
+  context.fillStyle = "white";
+  context.font = `700 ${Math.round(width * .025)}px sans-serif`;
+  context.fillText("山せとろぐ（仮）", width * .05, height * .09);
+  context.shadowBlur = 0;
+
+  if (options.showMap && options.gpxStyle === "line") drawRoute(context, width, height, options.labels);
+  if (options.showLocation && options.gpxStyle !== "profile") {
+    context.textAlign = "right";
+    context.fillStyle = "rgba(255,255,255,.82)";
+    context.font = `${Math.round(width * .014)}px sans-serif`;
+    context.fillText("現在地｜GPX照合", width * .95, height * .86);
+    context.fillStyle = "white";
+    context.font = `500 ${Math.round(width * .037)}px serif`;
+    context.fillText("穂高岳山荘", width * .95, height * .92);
+    context.textAlign = "left";
+  }
+  if (options.showAltitude && options.gpxStyle !== "profile") {
+    context.textAlign = "right";
+    context.fillStyle = "white";
+    context.font = `600 ${Math.round(width * .017)}px sans-serif`;
+    context.fillText("3,110 m", width * .95, height * .96);
+    context.textAlign = "left";
+  }
+  if (options.gpxStyle === "profile") drawProfile(context, width, height);
+}
+
+function drawRoute(context: CanvasRenderingContext2D, width: number, height: number, labels: LabelDensity) {
+  const path = new Path2D(fullRoute);
+  context.save();
+  context.translate(width * .61, height * .04);
+  context.scale(width * .00142, height * .00285);
+  context.strokeStyle = "rgba(255,255,255,.5)";
+  context.lineWidth = 5;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.stroke(path);
+  context.restore();
+  if (labels !== "none") {
+    context.fillStyle = "white";
+    context.font = `700 ${Math.round(width * .014)}px sans-serif`;
+    context.fillText("上高地", width * .64, height * .83);
+    context.fillText("穂高岳山荘", width * .72, height * .32);
+    if (labels === "detail") context.fillText("涸沢", width * .84, height * .19);
+  }
+}
+
+function drawProfile(context: CanvasRenderingContext2D, width: number, height: number) {
+  context.save();
+  context.fillStyle = "rgba(9,20,17,.55)";
+  context.fillRect(width * .05, height * .72, width * .9, height * .21);
+  context.strokeStyle = "white";
+  context.lineWidth = Math.max(2, width * .003);
+  context.beginPath();
+  for (let index = 0; index <= 20; index++) {
+    const x = width * (.07 + index * .043);
+    const y = height * (.88 - Math.sin(index / 4) * .09 - index * .002);
+    if (index === 0) context.moveTo(x, y); else context.lineTo(x, y);
+  }
+  context.stroke();
+  context.restore();
 }
 
 function Toggle({ label, note, checked, onChange }: { label: string; note: string; checked: boolean; onChange: (value: boolean) => void }) {
