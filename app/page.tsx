@@ -7,6 +7,8 @@ type GpxStyle = "line" | "location" | "profile";
 type LabelDensity = "none" | "major" | "detail";
 type GenerationState = "idle" | "exporting" | "ready" | "error";
 type PreviewMode = "clip" | "sequence";
+type GpxPoint = { index: number; lat: number; lon: number; ele: number; time: number };
+type GpxData = { name: string; points: GpxPoint[]; startTime: number; endTime: number };
 type MediaItem = {
   id: string;
   name: string;
@@ -15,20 +17,11 @@ type MediaItem = {
   kind: "video" | "image";
   url: string;
   file: File;
+  capturedAt: number;
+  durationSeconds: number | null;
+  day: number | null;
+  point: GpxPoint | null;
 };
-
-const fullRoute = "M20 270 L23 264 L25 260 L22 255 L22 249 L22 243 L25 238 L29 233 L30 227 L34 222 L37 217 L41 213 L43 209 L43 204 L45 198 L43 193 L45 188 L46 182 L47 177 L48 171 L48 165 L51 161 L55 157 L58 152 L57 147 L61 145 L65 143 L70 142 L75 139 L80 139 L83 135 L88 133 L90 130 L95 126 L99 124 L93 127 L93 123 L90 119 L87 114 L82 111 L78 108 L74 104 L70 101 L65 97 L61 94 L58 89 L59 84 L59 76 L63 73 L68 72 L73 72 L77 71 L81 66 L86 64 L90 68 L96 70 L101 68 L106 69 L112 70 L117 68 L122 65 L127 61 L132 58 L135 54 L135 48 L136 42 L138 36 L138 30 L140 26 L144 24 L150 21 L156 20 L159 18 L165 16 L171 16 L176 18 L182 21 L188 21 L193 24 L198 27 L202 32 L204 38 L205 43 L210 47 L213 53 L217 56 L219 62 L219 68 L221 74 L227 75 L230 77 L227 80 L222 83 L219 88 L217 94 L213 98 L208 102 L207 108 L206 114 L205 120 L206 126 L209 131 L210 137 L211 143 L211 149 L208 153 L205 158 L201 162 L202 168 L200 174 L199 180 L198 186 L200 191 L198 193 L195 199 L191 202 L186 206 L182 211 L178 216 L176 221 L175 227 L174 233 L170 238 L167 243 L162 246 L158 250 L153 248 L147 249 L142 252 L136 255 L131 255 L125 256 L122 251 L120 246 L116 245 L110 248 L105 246 L99 246 L94 248 L88 247 L82 245 L78 241 L72 239 L66 238 L60 236 L55 235 L50 231 L45 232 L39 235 L33 235 L27 235 L24 240 L22 245 L22 251 L23 257 L24 260";
-const progressRoute = "M20 270 L23 264 L25 260 L22 255 L22 249 L22 243 L25 238 L29 233 L30 227 L34 222 L37 217 L41 213 L43 209 L43 204 L45 198 L43 193 L45 188 L46 182 L47 177 L48 171 L48 165 L51 161 L55 157 L58 152 L57 147 L61 145 L65 143 L70 142 L75 139 L80 139 L83 135 L88 133 L90 130 L95 126 L99 124 L93 127 L93 123 L90 119 L87 114 L82 111 L78 108 L74 104 L70 101 L65 97 L61 94 L58 89 L59 84 L59 76 L59 83";
-
-const placeLabels = [
-  { name: "上高地", x: 20, y: 270, type: "major" },
-  { name: "前穂高岳", x: 89, y: 124, type: "major" },
-  { name: "奥穂高岳", x: 59, y: 93, type: "major" },
-  { name: "涸沢", x: 118, y: 66, type: "major" },
-  { name: "岳沢小屋", x: 61, y: 149, type: "detail" },
-  { name: "横尾", x: 163, y: 22, type: "detail" },
-  { name: "明神", x: 130, y: 210, type: "detail" },
-] as const;
 
 export default function Home() {
   const [duration, setDuration] = useState("60");
@@ -39,6 +32,7 @@ export default function Home() {
   const [showLocation, setShowLocation] = useState(true);
   const [showAltitude, setShowAltitude] = useState(true);
   const [gpxName, setGpxName] = useState("");
+  const [gpxData, setGpxData] = useState<GpxData | null>(null);
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [previewId, setPreviewId] = useState("");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("clip");
@@ -83,16 +77,22 @@ export default function Home() {
     if (outputUrl.current) URL.revokeObjectURL(outputUrl.current);
   }, []);
 
-  function readGpx(event: ChangeEvent<HTMLInputElement>) {
+  async function readGpx(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file) setGpxName(file.name);
+    if (!file) return;
+    const parsed = parseGpx(await file.text());
+    setGpxName(file.name);
+    setGpxData(parsed);
+    setMedia(items => matchAndSortMedia(items, parsed));
+    resetGeneration();
+    stopSequence();
   }
 
   function readVideos(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
     objectUrls.current.forEach(url => URL.revokeObjectURL(url));
-    const next = files.map((file, index) => ({
+    const next = files.map((file, index): MediaItem => ({
       id: `${file.name}-${file.lastModified}-${index}`,
       name: file.name,
       detail: `${formatBytes(file.size)}・端末上で読み込み済み`,
@@ -100,10 +100,15 @@ export default function Home() {
       kind: file.type.startsWith("image/") ? "image" as const : "video" as const,
       url: URL.createObjectURL(file),
       file,
+      capturedAt: file.lastModified,
+      durationSeconds: null,
+      day: null,
+      point: null,
     }));
-    objectUrls.current = next.map(item => item.url);
-    setMedia(next);
-    setPreviewId(next[0].id);
+    const matched = matchAndSortMedia(next, gpxData);
+    objectUrls.current = matched.map(item => item.url);
+    setMedia(matched);
+    setPreviewId(matched[0].id);
     stopSequence();
     setMediaOpen(true);
     resetGeneration();
@@ -126,6 +131,7 @@ export default function Home() {
         showMap,
         showLocation,
         showAltitude,
+        gpxData,
         isCancelled: () => generationRun.current !== run,
         onProgress: value => { if (generationRun.current === run) setGenerationProgress(value); },
       });
@@ -198,7 +204,7 @@ export default function Home() {
 
   function updateDuration(id: string, seconds: number) {
     if (!Number.isFinite(seconds)) return;
-    setMedia(items => items.map(item => item.id === id && item.url ? { ...item, detail: `${formatDuration(seconds)}・端末上で再生可能` } : item));
+    setMedia(items => items.map(item => item.id === id ? { ...item, durationSeconds: seconds, detail: mediaDetail(item, seconds) } : item));
   }
 
   return (
@@ -207,7 +213,7 @@ export default function Home() {
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">⌃</span>
           <strong>山せとろぐ（仮）</strong>
-          <span className="project-name">前穂・奥穂 テント泊</span>
+          <span className="project-name">{gpxData?.name || "山行記録"}</span>
         </div>
         <span className="save-state">下書き保存済み</span>
       </header>
@@ -223,7 +229,7 @@ export default function Home() {
             <div className="section-heading"><h2>1. 素材</h2><span>自動照合</span></div>
             <label className="upload-row">
               <span className="upload-icon">⌁</span>
-              <span className="upload-copy"><strong>{gpxName || "GPXを追加"}</strong><small>{gpxName ? "端末上で読み込み済み" : ".gpxファイルを選択"}</small></span>
+              <span className="upload-copy"><strong>{gpxName || "GPXを追加"}</strong><small>{gpxData ? `${gpxData.points.length}地点・${formatLocalDateTime(gpxData.startTime)}〜${formatLocalTime(gpxData.endTime)}` : ".gpxファイルを選択"}</small></span>
               {gpxName ? <span className="complete">✓</span> : <span className="choose-file">選択</span>}
               <input type="file" accept=".gpx,application/gpx+xml" onChange={readGpx} />
             </label>
@@ -277,9 +283,9 @@ export default function Home() {
           </section>
 
           <section className="setting-section">
-            <div className="section-heading"><h2>5. 地名ラベル</h2><span>{labels === "none" ? "表示なし" : labels === "major" ? "主要地点" : "詳細"}</span></div>
+            <div className="section-heading"><h2>5. ルート上のラベル</h2><span>{labels === "none" ? "表示なし" : labels === "major" ? "開始・終了" : "時刻まで"}</span></div>
             <div className="choice-row three">
-              {([{ id: "none", label: "なし" }, { id: "major", label: "主要地点" }, { id: "detail", label: "詳細" }] as { id: LabelDensity; label: string }[]).map(item => <button type="button" key={item.id} className={labels === item.id ? "selected" : ""} onClick={() => setLabels(item.id)}>{item.label}</button>)}
+              {([{ id: "none", label: "なし" }, { id: "major", label: "開始・終了" }, { id: "detail", label: "DAY・時刻" }] as { id: LabelDensity; label: string }[]).map(item => <button type="button" key={item.id} className={labels === item.id ? "selected" : ""} onClick={() => setLabels(item.id)}>{item.label}</button>)}
             </div>
           </section>
 
@@ -287,7 +293,7 @@ export default function Home() {
             <div className="section-heading"><h2>6. 表示する情報</h2><span>プレビューに反映</span></div>
             <div className="switch-list">
               <Toggle label="ルート地図" note="現在地と歩いた軌跡" checked={showMap} onChange={setShowMap} />
-              <Toggle label="地点・時刻" note="撮影地点の名前と時刻" checked={showLocation} onChange={setShowLocation} />
+              <Toggle label="地点・時刻" note="DAY・撮影時刻・座標" checked={showLocation} onChange={setShowLocation} />
               <Toggle label="標高" note="GPXから推定した標高" checked={showAltitude} onChange={setShowAltitude} />
             </div>
           </section>
@@ -307,11 +313,11 @@ export default function Home() {
           <div className="stage">
             <div className={`player ratio-${ratio.replace(":", "-")} style-${gpxStyle}`}>
               {previewMedia?.url ? previewMedia.kind === "video" ? <video className="uploaded-media" key={`${previewMode}-${previewMedia.url}`} src={previewMedia.url} controls={previewMode === "clip"} playsInline autoPlay muted loop={previewMode === "sequence"} onEnded={() => { if (previewMode === "clip") movePreview(1); }} onLoadedMetadata={event => updateDuration(previewMedia.id, event.currentTarget.duration)} /> : <img className="uploaded-media" src={previewMedia.url} alt={previewMedia.name} /> : <><div className="scene" aria-hidden="true"><span className="sun" /><span className="mountain far" /><span className="mountain near" /><span className="ridge" /></div><div className="sample-notice">まだ動画がありません。「写真・動画を追加」から実ファイルを選んでください。</div></>}
-              <div className="movie-title">山せとろぐ（仮）｜前穂・奥穂</div>
-              {gpxName && showMap && gpxStyle === "line" && <RouteOverlay labels={labels} />}
-              {gpxName && showLocation && gpxStyle !== "profile" && <div className={gpxStyle === "location" ? "location-stamp large" : "location-stamp"}><small>現在地｜DAY 2・06:17</small><strong>穂高岳山荘</strong></div>}
-              {gpxName && showAltitude && gpxStyle !== "profile" && <div className="altitude">3,110 m</div>}
-              {gpxName && gpxStyle === "profile" && <ElevationProfile />}
+              <div className="movie-title">山せとろぐ（仮）{gpxData?.name ? `｜${gpxData.name}` : ""}</div>
+              {gpxData && showMap && gpxStyle === "line" && <RouteOverlay gpx={gpxData} current={previewMedia?.point ?? null} labels={labels} />}
+              {gpxData && previewMedia && showLocation && gpxStyle !== "profile" && <LocationStamp item={previewMedia} large={gpxStyle === "location"} />}
+              {gpxData && previewMedia?.point && showAltitude && gpxStyle !== "profile" && <div className="altitude">{Math.round(previewMedia.point.ele).toLocaleString("ja-JP")} m</div>}
+              {gpxData && gpxStyle === "profile" && <ElevationProfile gpx={gpxData} current={previewMedia?.point ?? null} />}
             </div>
           </div>
           <div className="playback">
@@ -349,6 +355,99 @@ function formatClock(seconds: number) {
   return `${String(Math.floor(rounded / 60)).padStart(2, "0")}:${String(rounded % 60).padStart(2, "0")}`;
 }
 
+function parseGpx(xml: string): GpxData {
+  const documentNode = new DOMParser().parseFromString(xml, "application/xml");
+  if (documentNode.querySelector("parsererror")) throw new Error("GPXファイルを読み込めませんでした。");
+  const pointNodes = Array.from(documentNode.getElementsByTagNameNS("*", "trkpt"));
+  const points = pointNodes.map((node, index) => {
+    const timeText = node.getElementsByTagNameNS("*", "time")[0]?.textContent ?? "";
+    const eleText = node.getElementsByTagNameNS("*", "ele")[0]?.textContent ?? "0";
+    return { index, lat: Number(node.getAttribute("lat")), lon: Number(node.getAttribute("lon")), ele: Number(eleText), time: Date.parse(timeText) };
+  }).filter(point => Number.isFinite(point.lat) && Number.isFinite(point.lon) && Number.isFinite(point.time));
+  if (!points.length) throw new Error("時刻付きの軌跡がGPXに見つかりませんでした。");
+  points.forEach((point, index) => { point.index = index; });
+  const track = documentNode.getElementsByTagNameNS("*", "trk")[0];
+  const name = track?.getElementsByTagNameNS("*", "name")[0]?.textContent?.trim() || "山行記録";
+  return { name, points, startTime: points[0].time, endTime: points[points.length - 1].time };
+}
+
+function matchAndSortMedia(items: MediaItem[], gpx: GpxData | null) {
+  return items.map(item => {
+    const point = gpx ? nearestPoint(gpx.points, item.capturedAt) : null;
+    const matched = point && Math.abs(point.time - item.capturedAt) <= 15 * 60 * 1000 ? point : null;
+    const duringTrip = gpx && item.capturedAt >= gpx.startTime && item.capturedAt <= gpx.endTime;
+    const next = { ...item, point: matched, day: duringTrip && gpx ? dayFromStart(item.capturedAt, gpx.startTime) : null };
+    return { ...next, detail: mediaDetail(next, item.durationSeconds) };
+  }).sort((a, b) => a.capturedAt - b.capturedAt || a.name.localeCompare(b.name));
+}
+
+function nearestPoint(points: GpxPoint[], timestamp: number) {
+  let low = 0;
+  let high = points.length - 1;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (points[middle].time < timestamp) low = middle + 1;
+    else high = middle;
+  }
+  const after = points[low];
+  const before = points[Math.max(0, low - 1)];
+  return Math.abs(before.time - timestamp) <= Math.abs(after.time - timestamp) ? before : after;
+}
+
+function dayFromStart(timestamp: number, startTime: number) {
+  const japanOffset = 9 * 60 * 60 * 1000;
+  return Math.floor((timestamp + japanOffset) / 86_400_000) - Math.floor((startTime + japanOffset) / 86_400_000) + 1;
+}
+
+function formatLocalDateTime(timestamp: number) {
+  return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }).format(timestamp);
+}
+
+function formatLocalTime(timestamp: number) {
+  return new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", hour12: false }).format(timestamp);
+}
+
+function formatCoordinates(point: GpxPoint) {
+  return `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}`;
+}
+
+function mediaDetail(item: MediaItem, durationSeconds: number | null) {
+  const duration = durationSeconds === null ? "" : `${formatDuration(durationSeconds)}・`;
+  if (!item.day) return `${duration}${formatLocalDateTime(item.capturedAt)}・GPX期間外`;
+  if (!item.point) return `${duration}DAY ${item.day}・${formatLocalTime(item.capturedAt)}・位置記録なし`;
+  return `${duration}DAY ${item.day}・${formatLocalTime(item.capturedAt)}・${Math.round(item.point.ele).toLocaleString("ja-JP")} m`;
+}
+
+type ProjectedPoint = { x: number; y: number };
+
+function projectRoute(points: GpxPoint[], width: number, height: number, padding: number) {
+  const averageLat = points.reduce((sum, point) => sum + point.lat, 0) / points.length * Math.PI / 180;
+  const raw = points.map(point => ({ x: point.lon * Math.cos(averageLat), y: point.lat }));
+  const minX = Math.min(...raw.map(point => point.x));
+  const maxX = Math.max(...raw.map(point => point.x));
+  const minY = Math.min(...raw.map(point => point.y));
+  const maxY = Math.max(...raw.map(point => point.y));
+  const scale = Math.min((width - padding * 2) / Math.max(.000001, maxX - minX), (height - padding * 2) / Math.max(.000001, maxY - minY));
+  const drawnWidth = (maxX - minX) * scale;
+  const drawnHeight = (maxY - minY) * scale;
+  const offsetX = (width - drawnWidth) / 2;
+  const offsetY = (height - drawnHeight) / 2;
+  const projected = raw.map(point => ({ x: offsetX + (point.x - minX) * scale, y: offsetY + (maxY - point.y) * scale }));
+  return { points: projected, path: pathFromProjected(projected) };
+}
+
+function pathFromProjected(points: ProjectedPoint[]) {
+  return points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+}
+
+function elevationGeometry(points: GpxPoint[], maxPoints: number) {
+  const step = Math.max(1, Math.ceil(points.length / maxPoints));
+  const sampled = points.filter((_, index) => index % step === 0 || index === points.length - 1);
+  const min = Math.min(...sampled.map(point => point.ele));
+  const max = Math.max(...sampled.map(point => point.ele));
+  return sampled.map((point, index) => ({ x: index / Math.max(1, sampled.length - 1), y: (point.ele - min) / Math.max(1, max - min) }));
+}
+
 type ExportOptions = {
   items: MediaItem[];
   seconds: number;
@@ -358,6 +457,7 @@ type ExportOptions = {
   showMap: boolean;
   showLocation: boolean;
   showAltitude: boolean;
+  gpxData: GpxData | null;
   isCancelled: () => boolean;
   onProgress: (value: number) => void;
 };
@@ -394,7 +494,7 @@ async function exportMovie(options: ExportOptions) {
       if (item.kind === "image") {
         const image = await loadImage(item.url);
         await renderSegment(clipSeconds, time => {
-          drawFrame(context, canvas, image, options);
+          drawFrame(context, canvas, image, options, item);
           renderedSeconds += time;
           options.onProgress(Math.min(99, Math.round(renderedSeconds / options.seconds * 100)));
         }, options.isCancelled);
@@ -421,7 +521,7 @@ async function exportMovie(options: ExportOptions) {
               video.currentTime = 0;
               void video.play().catch(() => undefined);
             }
-            drawFrame(context, canvas, video, options);
+            drawFrame(context, canvas, video, options, item);
             renderedSeconds += time;
             options.onProgress(Math.min(99, Math.round(renderedSeconds / options.seconds * 100)));
           }, options.isCancelled);
@@ -486,7 +586,7 @@ function renderSegment(seconds: number, draw: (elapsed: number) => void, isCance
   });
 }
 
-function drawFrame(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, source: CanvasImageSource, options: ExportOptions) {
+function drawFrame(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, source: CanvasImageSource, options: ExportOptions, item: MediaItem) {
   const width = canvas.width;
   const height = canvas.height;
   context.fillStyle = "#0b1210";
@@ -502,32 +602,32 @@ function drawFrame(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
   context.shadowBlur = Math.max(5, width * .009);
   context.fillStyle = "white";
   context.font = `700 ${Math.round(width * .025)}px sans-serif`;
-  context.fillText("山せとろぐ（仮）", width * .05, height * .09);
+  context.fillText(`山せとろぐ（仮）${options.gpxData?.name ? `｜${options.gpxData.name}` : ""}`, width * .05, height * .09);
   context.shadowBlur = 0;
 
-  if (options.showMap && options.gpxStyle === "line") drawRoute(context, width, height, options.labels);
+  if (options.gpxData && options.showMap && options.gpxStyle === "line") drawRoute(context, width, height, options.gpxData, item.point, options.labels);
   if (options.showLocation && options.gpxStyle !== "profile") {
     context.textAlign = "right";
     context.fillStyle = "rgba(255,255,255,.82)";
     context.font = `${Math.round(width * .014)}px sans-serif`;
-    context.fillText("現在地｜GPX照合", width * .95, height * .86);
+    context.fillText(`${item.day ? `DAY ${item.day} ・ ` : ""}${formatLocalDateTime(item.capturedAt)}`, width * .95, height * .86);
     context.fillStyle = "white";
-    context.font = `500 ${Math.round(width * .037)}px serif`;
-    context.fillText("穂高岳山荘", width * .95, height * .92);
+    context.font = `600 ${Math.round(width * .024)}px sans-serif`;
+    context.fillText(item.point ? formatCoordinates(item.point) : item.day ? "位置記録なし" : "GPX期間外", width * .95, height * .92);
     context.textAlign = "left";
   }
-  if (options.showAltitude && options.gpxStyle !== "profile") {
+  if (options.showAltitude && options.gpxStyle !== "profile" && item.point) {
     context.textAlign = "right";
     context.fillStyle = "white";
     context.font = `600 ${Math.round(width * .017)}px sans-serif`;
-    context.fillText("3,110 m", width * .95, height * .96);
+    context.fillText(`${Math.round(item.point.ele).toLocaleString("ja-JP")} m`, width * .95, height * .96);
     context.textAlign = "left";
   }
-  if (options.gpxStyle === "profile") drawProfile(context, width, height);
+  if (options.gpxData && options.gpxStyle === "profile") drawProfile(context, width, height, options.gpxData, item.point);
 }
 
-function drawRoute(context: CanvasRenderingContext2D, width: number, height: number, labels: LabelDensity) {
-  const path = new Path2D(fullRoute);
+function drawRoute(context: CanvasRenderingContext2D, width: number, height: number, gpx: GpxData, current: GpxPoint | null, labels: LabelDensity) {
+  const geometry = projectRoute(gpx.points, 250, 300, 18);
   context.save();
   context.translate(width * .61, height * .04);
   context.scale(width * .00142, height * .00285);
@@ -535,30 +635,51 @@ function drawRoute(context: CanvasRenderingContext2D, width: number, height: num
   context.lineWidth = 5;
   context.lineCap = "round";
   context.lineJoin = "round";
-  context.stroke(path);
+  context.stroke(new Path2D(geometry.path));
+  if (current) {
+    context.strokeStyle = "white";
+    context.lineWidth = 8;
+    context.stroke(new Path2D(pathFromProjected(geometry.points.slice(0, current.index + 1))));
+    const dot = geometry.points[current.index];
+    if (dot) {
+      context.fillStyle = "white";
+      context.beginPath();
+      context.arc(dot.x, dot.y, 6, 0, Math.PI * 2);
+      context.fill();
+    }
+  }
   context.restore();
   if (labels !== "none") {
     context.fillStyle = "white";
     context.font = `700 ${Math.round(width * .014)}px sans-serif`;
-    context.fillText("上高地", width * .64, height * .83);
-    context.fillText("穂高岳山荘", width * .72, height * .32);
-    if (labels === "detail") context.fillText("涸沢", width * .84, height * .19);
+    context.fillText("START", width * .62, height * .91);
+    context.fillText("GOAL", width * .93, height * .09);
+    if (labels === "detail" && current) context.fillText(`DAY ${dayFromStart(current.time, gpx.startTime)}`, width * .75, height * .18);
   }
 }
 
-function drawProfile(context: CanvasRenderingContext2D, width: number, height: number) {
+function drawProfile(context: CanvasRenderingContext2D, width: number, height: number, gpx: GpxData, current: GpxPoint | null) {
   context.save();
   context.fillStyle = "rgba(9,20,17,.55)";
   context.fillRect(width * .05, height * .72, width * .9, height * .21);
   context.strokeStyle = "white";
   context.lineWidth = Math.max(2, width * .003);
   context.beginPath();
-  for (let index = 0; index <= 20; index++) {
-    const x = width * (.07 + index * .043);
-    const y = height * (.88 - Math.sin(index / 4) * .09 - index * .002);
+  const profile = elevationGeometry(gpx.points, 100);
+  profile.forEach((point, index) => {
+    const x = width * (.07 + point.x * .86);
+    const y = height * (.9 - point.y * .15);
     if (index === 0) context.moveTo(x, y); else context.lineTo(x, y);
-  }
+  });
   context.stroke();
+  if (current) {
+    const x = width * (.07 + current.index / Math.max(1, gpx.points.length - 1) * .86);
+    context.strokeStyle = "rgba(255,255,255,.75)";
+    context.beginPath();
+    context.moveTo(x, height * .73);
+    context.lineTo(x, height * .91);
+    context.stroke();
+  }
   context.restore();
 }
 
@@ -567,10 +688,22 @@ function Toggle({ label, note, checked, onChange }: { label: string; note: strin
   return <label className="switch-row" htmlFor={id}><span><strong>{label}</strong><small>{note}</small></span><input id={id} aria-label={label} type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} /><i /></label>;
 }
 
-function RouteOverlay({ labels }: { labels: LabelDensity }) {
-  return <div className="route-overlay"><span className="north-note">北が上・実際のGPX形状</span><svg viewBox="0 0 250 300" role="img" aria-label="前穂・奥穂のGPX軌跡"><path className="route-full" d={fullRoute} /><path className="route-progress" d={progressRoute} /><circle className="current-halo" cx="59" cy="83" r="13" /><circle className="current-point" cx="59" cy="83" r="6" /><text className="current-label" x="69" y="82">穂高岳山荘</text>{labels !== "none" && placeLabels.filter(place => labels === "detail" || place.type === "major").map(place => <g className="place-label" key={place.name}><circle cx={place.x} cy={place.y} r="2.3" /><text x={place.x + 8} y={place.y + 3}>{place.name}</text></g>)}<text className="north" x="230" y="18">N ↑</text></svg></div>;
+function RouteOverlay({ gpx, current, labels }: { gpx: GpxData; current: GpxPoint | null; labels: LabelDensity }) {
+  const geometry = projectRoute(gpx.points, 250, 300, 18);
+  const currentPosition = current ? geometry.points[current.index] : null;
+  const progress = current ? pathFromProjected(geometry.points.slice(0, current.index + 1)) : "";
+  const start = geometry.points[0];
+  const end = geometry.points[geometry.points.length - 1];
+  return <div className="route-overlay"><svg viewBox="0 0 250 300" role="img" aria-label={`${gpx.name}のGPX軌跡`}><path className="route-full" d={geometry.path} />{progress && <path className="route-progress" d={progress} />}{currentPosition && <><circle className="current-halo" cx={currentPosition.x} cy={currentPosition.y} r="11" /><circle className="current-point" cx={currentPosition.x} cy={currentPosition.y} r="5" /></>}{labels !== "none" && <><g className="place-label"><circle cx={start.x} cy={start.y} r="2.3" /><text x={start.x + 7} y={start.y + 3}>START</text></g><g className="place-label"><circle cx={end.x} cy={end.y} r="2.3" /><text x={end.x + 7} y={end.y + 3}>GOAL</text></g>{labels === "detail" && currentPosition && <text className="current-label" x={currentPosition.x + 8} y={currentPosition.y - 8}>{`DAY ${dayFromStart(current!.time, gpx.startTime)}・${formatLocalTime(current!.time)}`}</text>}</>}</svg></div>;
 }
 
-function ElevationProfile() {
-  return <div className="elevation-profile"><div><span>標高断面</span><strong>現在 3,110 m</strong></div><svg viewBox="0 0 500 75" preserveAspectRatio="none" role="img" aria-label="山行の標高断面"><path d="M0 70 L20 64 L38 59 L55 51 L72 49 L88 41 L106 37 L124 31 L142 22 L159 26 L177 16 L194 9 L211 14 L229 6 L246 12 L265 21 L284 16 L302 25 L320 19 L338 30 L357 34 L376 42 L396 46 L415 53 L435 56 L457 62 L480 66 L500 70 Z" /><line x1="220" y1="2" x2="220" y2="70" /><circle cx="220" cy="8" r="4" /></svg></div>;
+function LocationStamp({ item, large }: { item: MediaItem; large: boolean }) {
+  return <div className={large ? "location-stamp large" : "location-stamp"}><small>{item.day ? `DAY ${item.day} ・ ` : ""}{formatLocalDateTime(item.capturedAt)}</small><strong>{item.point ? formatCoordinates(item.point) : item.day ? "位置記録なし" : "GPX期間外"}</strong></div>;
+}
+
+function ElevationProfile({ gpx, current }: { gpx: GpxData; current: GpxPoint | null }) {
+  const profile = elevationGeometry(gpx.points, 100);
+  const line = profile.map((point, index) => `${index ? "L" : "M"}${(point.x * 500).toFixed(1)} ${(70 - point.y * 62).toFixed(1)}`).join(" ");
+  const cursorX = current ? current.index / Math.max(1, gpx.points.length - 1) * 500 : 0;
+  return <div className="elevation-profile"><div><span>標高断面</span><strong>{current ? `現在 ${Math.round(current.ele).toLocaleString("ja-JP")} m` : "撮影時刻を照合できません"}</strong></div><svg viewBox="0 0 500 75" preserveAspectRatio="none" role="img" aria-label={`${gpx.name}の標高断面`}><path d={`${line} L500 75 L0 75 Z`} />{current && <><line x1={cursorX} y1="2" x2={cursorX} y2="70" /><circle cx={cursorX} cy={Math.max(5, 70 - profile[Math.min(profile.length - 1, Math.round(current.index / Math.max(1, gpx.points.length - 1) * (profile.length - 1)))].y * 62)} r="4" /></>}</svg></div>;
 }

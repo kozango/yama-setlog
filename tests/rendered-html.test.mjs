@@ -22,6 +22,6 @@ test("renders the Yama Setlog editor", async () => {
   assert.match(html, /<title>山せとろぐ（仮）<\/title>/);
   assert.match(html, /山行ムービーを作る/);
   assert.match(html, /GPXの見せ方/);
-  assert.match(html, /地名ラベル/);
+  assert.match(html, /ルート上のラベル/);
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview/);
 });
