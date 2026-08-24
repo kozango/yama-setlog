@@ -4,10 +4,13 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Ratio = "16:9" | "9:16" | "1:1";
 type LabelDensity = "none" | "major" | "detail";
+type MapPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 type GenerationState = "idle" | "exporting" | "ready" | "error";
 type PreviewMode = "clip" | "sequence";
 type GpxPoint = { index: number; lat: number; lon: number; ele: number; time: number; name: string | null };
 type GpxData = { name: string; points: GpxPoint[]; startTime: number; endTime: number };
+type PlaceGpxPoint = { lat: number; lon: number; name: string };
+type PlaceGpxData = { name: string; points: PlaceGpxPoint[] };
 type MediaItem = {
   id: string;
   name: string;
@@ -21,6 +24,8 @@ type MediaItem = {
   durationSeconds: number | null;
   point: GpxPoint | null;
   pointGapMinutes: number | null;
+  placeName: string | null;
+  caption: string;
 };
 
 export default function Home() {
@@ -28,9 +33,15 @@ export default function Home() {
   const [ratio, setRatio] = useState<Ratio>("9:16");
   const [showRoute, setShowRoute] = useState(true);
   const [labelDensity, setLabelDensity] = useState<LabelDensity>("major");
+  const [mapPosition, setMapPosition] = useState<MapPosition>("top-right");
+  const [showDateTime, setShowDateTime] = useState(true);
+  const [showPlace, setShowPlace] = useState(true);
   const [gpxName, setGpxName] = useState("");
-  const [gpxData, setGpxData] = useState<GpxData | null>(null);
+  const [routeGpxData, setRouteGpxData] = useState<GpxData | null>(null);
   const [gpxError, setGpxError] = useState("");
+  const [placeGpxName, setPlaceGpxName] = useState("");
+  const [placeGpxData, setPlaceGpxData] = useState<PlaceGpxData | null>(null);
+  const [placeGpxError, setPlaceGpxError] = useState("");
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [previewId, setPreviewId] = useState("");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("clip");
@@ -46,8 +57,11 @@ export default function Home() {
   const outputUrl = useRef("");
   const sequenceStart = useRef(0);
 
+  const placeMerge = useMemo(() => routeGpxData ? mergePlaceNames(routeGpxData, placeGpxData) : null, [routeGpxData, placeGpxData]);
+  const gpxData = placeMerge?.data ?? null;
   const selectedMedia = useMemo(() => media.filter(item => item.selected), [media]);
   const previewMedia = selectedMedia.find(item => item.id === previewId) ?? selectedMedia[0];
+  const hasNamedPlaces = Boolean(gpxData?.points.some(point => point.name));
 
   const generationBusy = generationState === "exporting";
   const targetSeconds = duration === "auto" ? Math.min(60, Math.max(12, selectedMedia.length * 4)) : Number(duration);
@@ -81,16 +95,60 @@ export default function Home() {
     try {
       const parsed = parseGpx(await file.text());
       setGpxName(file.name);
-      setGpxData(parsed);
+      setRouteGpxData(parsed);
       setGpxError("");
+      setPlaceGpxName("");
+      setPlaceGpxData(null);
+      setPlaceGpxError("");
       setMedia(items => matchAndSortMedia(items, parsed));
       resetGeneration();
       stopSequence();
     } catch (error) {
       setGpxName("");
-      setGpxData(null);
+      setRouteGpxData(null);
+      setPlaceGpxName("");
+      setPlaceGpxData(null);
+      setPlaceGpxError("");
+      setMedia(items => matchAndSortMedia(items, null));
       setGpxError(error instanceof Error ? error.message : "GPXを読み込めませんでした。");
+      resetGeneration();
+      stopSequence();
     }
+  }
+
+  async function readPlaceGpx(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file || !routeGpxData) return;
+    try {
+      const parsed = parsePlaceGpx(await file.text());
+      const merged = mergePlaceNames(routeGpxData, parsed);
+      if (!merged.matched) throw new Error("ルートから500m以内に一致する地名がありませんでした。");
+      setPlaceGpxName(file.name);
+      setPlaceGpxData(parsed);
+      setPlaceGpxError("");
+      setMedia(items => matchAndSortMedia(items, merged.data));
+      resetGeneration();
+      stopSequence();
+    } catch (error) {
+      setPlaceGpxName("");
+      setPlaceGpxData(null);
+      setMedia(items => matchAndSortMedia(items, routeGpxData));
+      setPlaceGpxError(error instanceof Error ? error.message : "地名GPXを読み込めませんでした。");
+      resetGeneration();
+      stopSequence();
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function clearPlaceGpx() {
+    if (!routeGpxData) return;
+    setPlaceGpxName("");
+    setPlaceGpxData(null);
+    setPlaceGpxError("");
+    setMedia(items => matchAndSortMedia(items, routeGpxData));
+    resetGeneration();
+    stopSequence();
   }
 
   async function readVideos(event: ChangeEvent<HTMLInputElement>) {
@@ -112,6 +170,8 @@ export default function Home() {
         durationSeconds: null,
         point: null,
         pointGapMinutes: null,
+        placeName: null,
+        caption: "",
       };
     }));
     const matched = matchAndSortMedia(next, gpxData);
@@ -137,6 +197,9 @@ export default function Home() {
         ratio,
         showRoute,
         labelDensity,
+        mapPosition,
+        showDateTime,
+        showPlace,
         gpx: gpxData,
         isCancelled: () => generationRun.current !== run,
         onProgress: value => { if (generationRun.current === run) setGenerationProgress(value); },
@@ -213,6 +276,11 @@ export default function Home() {
     setMedia(items => items.map(item => item.id === id ? { ...item, durationSeconds: seconds, detail: mediaDetail(item, seconds) } : item));
   }
 
+  function updateCaption(id: string, caption: string) {
+    setMedia(items => items.map(item => item.id === id ? { ...item, caption } : item));
+    resetGeneration();
+  }
+
   if (generationState === "exporting") return <main className="phone-app"><header className="phone-header"><strong>山せとろぐ（仮）</strong></header><section className="processing-screen"><div className="processing-ring" style={{ "--progress": `${generationProgress * 3.6}deg` } as { "--progress": string }}><span>{generationProgress}%</span></div><h1>完成動画を書き出しています</h1><p>{targetSeconds}秒版は、およそ{targetSeconds}秒で完成します。<br />この画面を閉じずにお待ちください。</p><div className="generation-progress"><i style={{ width: `${generationProgress}%` }} /></div></section></main>;
 
   if (generationState === "ready" && output) return <main className="phone-app">
@@ -229,12 +297,14 @@ export default function Home() {
   return <main className="phone-app">
     <header className="phone-header"><strong>山せとろぐ（仮）</strong><span>端末内で作成</span></header>
     <div className="phone-content">
-      <section className="phone-intro"><small>GPX × 撮影素材</small><h1>山行の30秒ムービーを作る</h1><p>素材は撮影日時順に並びます。完成動画には撮影日時と実際のルートを表示します。</p></section>
+      <section className="phone-intro"><small>GPX × 撮影素材</small><h1>山行の30秒ムービーを作る</h1><p>撮影日時・近くの地名・実際のルートを自動表示。キャプションは必要な素材だけ追加できます。</p></section>
 
       <section className="phone-card">
         <div className="phone-step"><i>1</i><span><strong>素材を選ぶ</strong><small>GPXと写真・動画の両方が必要です</small></span></div>
-        <label className="phone-upload"><span className="upload-icon">⌁</span><span className="upload-copy"><strong>{gpxName || "GPXを選択"}</strong><small>{gpxData ? `${gpxData.points.length}地点・${formatLocalDateTime(gpxData.startTime)}から` : "撮影時刻との照合に使います"}</small></span><b className={gpxData ? "upload-ok" : ""}>{gpxData ? "✓" : "選択"}</b><input type="file" accept=".gpx,application/gpx+xml" onChange={readGpx} /></label>
+        <label className="phone-upload"><span className="upload-icon">⌁</span><span className="upload-copy"><strong>{gpxName || "ルートGPXを選択"}</strong><small>{gpxData ? `${gpxData.points.length}地点・${formatLocalDateTime(gpxData.startTime)}から` : "軌跡と撮影時刻に使います"}</small></span><b className={gpxData ? "upload-ok" : ""}>{gpxData ? "✓" : "選択"}</b><input type="file" accept=".gpx,application/gpx+xml" onChange={readGpx} /></label>
         {gpxError && <p className="inline-error">{gpxError}</p>}
+        {routeGpxData && <div className="place-gpx-row"><label className="phone-upload place-gpx-upload"><span className="upload-icon place">＋</span><span className="upload-copy"><strong>{placeGpxName || "地名GPXを追加（任意）"}</strong><small>{placeGpxData ? `${placeMerge?.matched ?? 0}地点をルートへ合成` : "山レコ等から地名だけを合成します"}</small></span><b className={placeGpxData ? "upload-ok" : ""}>{placeGpxData ? "変更" : "追加"}</b><input type="file" accept=".gpx,application/gpx+xml" onChange={readPlaceGpx} /></label>{placeGpxData && <button type="button" className="place-gpx-clear" onClick={clearPlaceGpx}>地名を外す</button>}</div>}
+        {placeGpxError && <p className="inline-error">{placeGpxError}</p>}
         <label className="phone-upload"><span className="upload-icon warm">▶</span><span className="upload-copy"><strong>写真・動画を選択</strong><small>{media.length ? `${media.length}本を撮影日時順に整理済み` : "まとめて選択できます"}</small></span><b className={media.length ? "upload-ok" : ""}>{media.length ? `${selectedMedia.length}本` : "選択"}</b><input type="file" accept="video/*,image/*" multiple onChange={readVideos} /></label>
         <div className="ready-checks"><span className={gpxData ? "done" : ""}>{gpxData ? "✓" : "1"} GPX</span><i /><span className={selectedMedia.length ? "done" : ""}>{selectedMedia.length ? "✓" : "2"} 動画</span><i /><span className={gpxData && selectedMedia.length ? "done" : ""}>{gpxData && selectedMedia.length ? "✓" : "3"} 作成可能</span></div>
       </section>
@@ -247,12 +317,15 @@ export default function Home() {
         <div className="compact-label">画面</div><div className="choice-row three">{(["9:16", "16:9", "1:1"] as Ratio[]).map(value => <button type="button" key={value} className={ratio === value ? "selected" : ""} onClick={() => setRatio(value)}>{value === "9:16" ? "縦" : value === "16:9" ? "横" : "正方形"}</button>)}</div>
         <button type="button" className={showRoute ? "route-toggle selected" : "route-toggle"} aria-pressed={showRoute} onClick={() => { setShowRoute(value => !value); resetGeneration(); }}><span><strong>ルート地図</strong><small>実際のGPX軌跡と撮影時点を表示</small></span><i>{showRoute ? "ON" : "OFF"}</i></button>
         {showRoute && <><div className="compact-label">地名</div><div className="choice-row three">{([{ value: "none", label: "なし" }, { value: "major", label: "主要地点" }, { value: "detail", label: "詳細" }] as { value: LabelDensity; label: string }[]).map(option => <button type="button" key={option.value} className={labelDensity === option.value ? "selected" : ""} onClick={() => { setLabelDensity(option.value); resetGeneration(); }}>{option.label}</button>)}</div></>}
+        {showRoute && <><div className="compact-label">地図の位置</div><div className="choice-row four">{([{ value: "top-left", label: "左上" }, { value: "top-right", label: "右上" }, { value: "bottom-left", label: "左下" }, { value: "bottom-right", label: "右下" }] as { value: MapPosition; label: string }[]).map(option => <button type="button" key={option.value} className={mapPosition === option.value ? "selected" : ""} onClick={() => { setMapPosition(option.value); resetGeneration(); }}>{option.label}</button>)}</div></>}
+        <div className="compact-label">表示する情報</div><div className="info-toggle-row"><button type="button" className={showDateTime ? "selected" : ""} aria-pressed={showDateTime} onClick={() => { setShowDateTime(value => !value); resetGeneration(); }}><span><strong>撮影日時</strong><small>動画内の時刻</small></span><i>{showDateTime ? "ON" : "OFF"}</i></button><button type="button" className={showPlace && hasNamedPlaces ? "selected" : ""} aria-pressed={showPlace && hasNamedPlaces} disabled={!hasNamedPlaces} onClick={() => { setShowPlace(value => !value); resetGeneration(); }}><span><strong>近くの地名</strong><small>{hasNamedPlaces ? "GPXから取得" : "GPXに地名なし"}</small></span><i>{showPlace && hasNamedPlaces ? "ON" : "OFF"}</i></button></div>
       </section>
 
       <section className="phone-card preview-card">
         <div className="phone-step"><i>3</i><span><strong>完成イメージを確認</strong><small>書き出す前に{targetSeconds}秒をそのまま再生できます</small></span></div>
-        <div className={`phone-player ratio-${ratio.replace(":", "-")}`}>{previewMedia?.url ? previewMedia.kind === "video" ? <video className="uploaded-media" key={`${previewMode}-${previewMedia.url}`} src={previewMedia.url} controls={previewMode === "clip"} playsInline autoPlay muted loop={previewMode === "sequence"} onEnded={() => { if (previewMode === "clip") movePreview(1); }} onLoadedMetadata={event => updateDuration(previewMedia.id, event.currentTarget.duration)} /> : <img className="uploaded-media" src={previewMedia.url} alt={previewMedia.name} /> : <div className="empty-player">動画を選択すると<br />ここで確認できます</div>}{showRoute && gpxData && <GpxRouteOverlay gpx={gpxData} current={previewMedia?.point ?? null} density={labelDensity} />}{previewMedia && <time className="capture-time">{formatOutputDateTime(previewMedia.capturedAt)}</time>}</div>
+        <div className={`phone-player ratio-${ratio.replace(":", "-")} map-${mapPosition}`}>{previewMedia?.url ? previewMedia.kind === "video" ? <video className="uploaded-media" key={`${previewMode}-${previewMedia.url}`} src={previewMedia.url} controls={previewMode === "clip"} playsInline autoPlay muted loop={previewMode === "sequence"} onEnded={() => { if (previewMode === "clip") movePreview(1); }} onLoadedMetadata={event => updateDuration(previewMedia.id, event.currentTarget.duration)} /> : <img className="uploaded-media" src={previewMedia.url} alt={previewMedia.name} /> : <div className="empty-player">動画を選択すると<br />ここで確認できます</div>}{showRoute && gpxData && <GpxRouteOverlay gpx={gpxData} current={previewMedia?.point ?? null} density={labelDensity} position={mapPosition} />}{previewMedia?.caption && <div className="clip-caption">{previewMedia.caption}</div>}{previewMedia && (showDateTime || showPlace) && <div className="capture-meta">{showDateTime && <time>{formatOutputDateTime(previewMedia.capturedAt)}</time>}{showPlace && previewMedia.placeName && <span>{previewMedia.placeName}付近</span>}</div>}</div>
         <div className="preview-meta"><span>{previewMode === "sequence" ? "完成プレビュー" : previewMedia?.name || "素材未選択"}</span><b>{previewMedia ? `${selectedMedia.findIndex(item => item.id === previewMedia.id) + 1}/${selectedMedia.length}` : ""}</b></div>
+        {previewMedia && previewMode === "clip" && <div className="caption-field"><span><strong>この素材のキャプション</strong><small>任意・空欄なら表示しません</small></span><input aria-label={`${previewMedia.name}のキャプション`} value={previewMedia.caption} maxLength={48} placeholder="例：朝日に染まる稜線" onChange={event => updateCaption(previewMedia.id, event.target.value)} /></div>}
         <div className="timeline active"><i style={{ width: previewMode === "sequence" ? `${sequenceProgress}%` : "0%" }} /></div><div className="time-row"><span>{previewMode === "sequence" ? formatClock(targetSeconds * sequenceProgress / 100) : "00:00"}</span><span>{totalTime}</span></div>
         <button type="button" className="preview-action" onClick={startSequence} disabled={!selectedMedia.length}>{sequencePlaying ? `再生中 ${Math.round(sequenceProgress)}%` : `▶ ${targetSeconds}秒の完成イメージを見る`}</button>
       </section>
@@ -297,12 +370,56 @@ function parseGpx(xml: string): GpxData {
   return { name, points, startTime: points[0].time, endTime: points[points.length - 1].time };
 }
 
+function parsePlaceGpx(xml: string): PlaceGpxData {
+  const documentNode = new DOMParser().parseFromString(xml, "application/xml");
+  if (documentNode.querySelector("parsererror")) throw new Error("地名GPXを読み込めませんでした。");
+  const pointNodes = ["trkpt", "wpt", "rtept"].flatMap(tag => Array.from(documentNode.getElementsByTagNameNS("*", tag)));
+  const seen = new Set<string>();
+  const points = pointNodes.flatMap(node => {
+    const name = node.getElementsByTagNameNS("*", "name")[0]?.textContent?.trim();
+    const lat = Number(node.getAttribute("lat"));
+    const lon = Number(node.getAttribute("lon"));
+    if (!name || !Number.isFinite(lat) || !Number.isFinite(lon) || seen.has(name)) return [];
+    seen.add(name);
+    return [{ lat, lon, name }];
+  });
+  if (!points.length) throw new Error("このGPXには座標付きの地名がありませんでした。");
+  const track = documentNode.getElementsByTagNameNS("*", "trk")[0];
+  const name = track?.getElementsByTagNameNS("*", "name")[0]?.textContent?.trim() || "地名GPX";
+  return { name, points };
+}
+
+function mergePlaceNames(route: GpxData, places: PlaceGpxData | null) {
+  if (!places) return { data: route, matched: 0 };
+  const points = route.points.map(point => ({ ...point }));
+  const used = new Set<number>();
+  let matched = 0;
+  for (const place of places.points) {
+    let nearestIndex = -1;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    points.forEach((point, index) => {
+      if (used.has(index)) return;
+      const distance = haversineMeters(place, point);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+    if (nearestIndex < 0 || nearestDistance > 500) continue;
+    if (!points[nearestIndex].name) points[nearestIndex].name = place.name;
+    used.add(nearestIndex);
+    matched += 1;
+  }
+  return { data: { ...route, points }, matched };
+}
+
 function matchAndSortMedia(items: MediaItem[], gpx: GpxData | null) {
   return items.map(item => {
     const point = gpx ? nearestPoint(gpx.points, item.capturedAt) : null;
     const insideActivity = Boolean(gpx && item.capturedAt >= gpx.startTime && item.capturedAt <= gpx.endTime);
     const gapMinutes = point ? Math.round(Math.abs(point.time - item.capturedAt) / 60000) : null;
-    const next = { ...item, point: insideActivity ? point : null, pointGapMinutes: insideActivity ? gapMinutes : null };
+    const matchedPoint = insideActivity ? point : null;
+    const next = { ...item, point: matchedPoint, pointGapMinutes: insideActivity ? gapMinutes : null, placeName: gpx && matchedPoint ? nearestPlaceName(gpx.points, matchedPoint) : null };
     return { ...next, detail: mediaDetail(next, item.durationSeconds) };
   }).sort((a, b) => a.capturedAt - b.capturedAt || a.name.localeCompare(b.name));
 }
@@ -333,11 +450,11 @@ function formatOutputDateTime(timestamp: number) {
 function mediaDetail(item: MediaItem, durationSeconds: number | null) {
   const duration = durationSeconds === null ? "" : `${formatDuration(durationSeconds)}・`;
   const source = item.capturedAtSource === "metadata" ? "動画内の撮影時刻" : "ファイルの日時";
-  const match = item.point ? item.pointGapMinutes && item.pointGapMinutes > 15 ? "GPX停止区間・最寄り地点を使用" : "GPXに反映済み" : "GPXの活動時間外";
+  const match = item.placeName ? `${item.placeName}付近` : item.point ? item.pointGapMinutes && item.pointGapMinutes > 15 ? "GPX停止区間・最寄り地点を使用" : "GPXに反映済み" : "GPXの活動時間外";
   return `${duration}${formatOutputDateTime(item.capturedAt)}・${source}・${match}`;
 }
 
-function GpxRouteOverlay({ gpx, current, density }: { gpx: GpxData; current: GpxPoint | null; density: LabelDensity }) {
+function GpxRouteOverlay({ gpx, current, density, position }: { gpx: GpxData; current: GpxPoint | null; density: LabelDensity; position: MapPosition }) {
   const projected = projectRoute(gpx.points, 100, 100, 8);
   if (projected.length < 2) return null;
   const path = routePath(projected);
@@ -347,12 +464,12 @@ function GpxRouteOverlay({ gpx, current, density }: { gpx: GpxData; current: Gpx
   const start = projected[0];
   const end = projected[projected.length - 1];
   const labels = selectRouteLabels(gpx.points, projected, density);
-  return <svg className="route-map-overlay" viewBox="0 0 100 100" role="img" aria-label="GPXルートと撮影時点">
+  return <svg className={`route-map-overlay map-${position}`} viewBox="0 0 100 100" role="img" aria-label="GPXルートと撮影時点">
     <path className="route-map-full" d={path} />
     <path className="route-map-travelled" d={travelled} />
     <circle className="route-map-end" cx={start.x} cy={start.y} r="1.8" />
     <circle className="route-map-end" cx={end.x} cy={end.y} r="1.8" />
-    {labels.map(label => <g className="route-map-label" key={`${label.index}-${label.name}`}><circle cx={label.x} cy={label.y} r="1.2" /><text x={label.x > 72 ? Math.max(8, label.x - 2.5) : Math.min(92, label.x + 2.5)} y={Math.max(6, label.y - 2)} textAnchor={label.x > 72 ? "end" : "start"}>{label.name}</text></g>)}
+    {labels.map(label => <g className="route-map-label" key={`${label.index}-${label.name}`}><circle cx={label.x} cy={label.y} r=".75" /><text x={label.x > 72 ? Math.max(8, label.x - 2.2) : Math.min(92, label.x + 2.2)} y={Math.max(6, label.y - 1.7)} textAnchor={label.x > 72 ? "end" : "start"}>{label.name}</text></g>)}
     {current && <><circle className="route-map-pulse" cx={currentPoint.x} cy={currentPoint.y} r="5" /><circle className="route-map-current" cx={currentPoint.x} cy={currentPoint.y} r="2.6" /></>}
   </svg>;
 }
@@ -410,6 +527,23 @@ function displayPlaceName(name: string) {
   return name.replace(/\s*\[[^\]]+\]\s*$/, "").trim();
 }
 
+function nearestPlaceName(points: GpxPoint[], current: GpxPoint) {
+  const named = points.filter((point): point is GpxPoint & { name: string } => Boolean(point.name));
+  if (!named.length) return null;
+  const nearest = named.reduce((best, point) => haversineMeters(current, point) < haversineMeters(current, best) ? point : best);
+  return haversineMeters(current, nearest) <= 2500 ? displayPlaceName(nearest.name) : null;
+}
+
+function haversineMeters(a: Pick<GpxPoint, "lat" | "lon">, b: Pick<GpxPoint, "lat" | "lon">) {
+  const radius = 6_371_000;
+  const lat1 = a.lat * Math.PI / 180;
+  const lat2 = b.lat * Math.PI / 180;
+  const deltaLat = (b.lat - a.lat) * Math.PI / 180;
+  const deltaLon = (b.lon - a.lon) * Math.PI / 180;
+  const value = Math.sin(deltaLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+  return radius * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
 function placePriority(name: string) {
   let score = 0;
   if (/(岳|山|峰|頂|峠)/.test(name)) score += 4;
@@ -454,6 +588,9 @@ type ExportOptions = {
   ratio: Ratio;
   showRoute: boolean;
   labelDensity: LabelDensity;
+  mapPosition: MapPosition;
+  showDateTime: boolean;
+  showPlace: boolean;
   gpx: GpxData;
   isCancelled: () => boolean;
   onProgress: (value: number) => void;
@@ -594,31 +731,20 @@ function drawFrame(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
   const drawWidth = sourceWidth * scale;
   const drawHeight = sourceHeight * scale;
   context.drawImage(source, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
-  if (options.showRoute) drawRouteMap(context, canvas, options.gpx, item.point, options.labelDensity);
-  const label = formatOutputDateTime(item.capturedAt);
-  context.font = `700 ${Math.round(width * .026)}px sans-serif`;
-  const metrics = context.measureText(label);
-  const padX = width * .018;
-  const padY = height * .014;
-  const boxHeight = Math.round(width * .026) + padY * 2;
-  context.fillStyle = "rgba(7,15,12,.68)";
-  context.fillRect(width * .045, height * .91 - boxHeight, metrics.width + padX * 2, boxHeight);
-  context.fillStyle = "white";
-  context.textAlign = "left";
-  context.fillText(label, width * .045 + padX, height * .91 - padY);
+  if (options.showRoute) drawRouteMap(context, canvas, options.gpx, item.point, options.labelDensity, options.mapPosition);
+  if (item.caption) drawCaption(context, canvas, item.caption, options.mapPosition);
+  if (options.showDateTime || options.showPlace) drawMetadata(context, canvas, item, options.showDateTime, options.showPlace);
 }
 
-function drawRouteMap(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, gpx: GpxData, current: GpxPoint | null, density: LabelDensity) {
-  const size = Math.min(canvas.width * .42, canvas.height * .3);
-  const left = canvas.width - size - canvas.width * .035;
-  const top = canvas.height * .035;
+function drawRouteMap(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, gpx: GpxData, current: GpxPoint | null, density: LabelDensity, position: MapPosition) {
+  const size = Math.min(canvas.width * .35, canvas.height * .42);
+  const left = position.endsWith("left") ? canvas.width * .035 : canvas.width - size - canvas.width * .035;
+  const top = position.startsWith("top") ? canvas.height * .035 : canvas.height - size - canvas.height * .16;
   const points = projectRoute(gpx.points, size, size, size * .09);
   if (points.length < 2) return;
   context.save();
-  context.fillStyle = "rgba(5,17,13,.58)";
-  context.beginPath();
-  context.roundRect(left, top, size, size, size * .07);
-  context.fill();
+  context.shadowColor = "rgba(0,0,0,.68)";
+  context.shadowBlur = Math.max(3, size * .025);
   const drawPath = (until: number, color: string, lineWidth: number) => {
     context.beginPath();
     points.slice(0, until + 1).forEach((point, index) => index ? context.lineTo(left + point.x, top + point.y) : context.moveTo(left + point.x, top + point.y));
@@ -631,7 +757,7 @@ function drawRouteMap(context: CanvasRenderingContext2D, canvas: HTMLCanvasEleme
   drawPath(points.length - 1, "rgba(255,255,255,.35)", Math.max(1.5, size * .012));
   if (current) drawPath(current.index, "rgba(255,255,255,.96)", Math.max(2.5, size * .021));
   const labels = selectRouteLabels(gpx.points, points, density);
-  context.font = `700 ${Math.max(7, size * .038)}px sans-serif`;
+  context.font = `700 ${Math.max(9, size * .04)}px sans-serif`;
   context.textBaseline = "middle";
   context.lineJoin = "round";
   for (const label of labels) {
@@ -644,12 +770,12 @@ function drawRouteMap(context: CanvasRenderingContext2D, canvas: HTMLCanvasEleme
     context.textAlign = label.x > size * .72 ? "right" : "left";
     const textX = x + (label.x > size * .72 ? -size * .025 : size * .025);
     context.strokeStyle = "rgba(3,12,9,.88)";
-    context.lineWidth = Math.max(2, size * .016);
+    context.lineWidth = Math.max(1.2, size * .007);
     context.strokeText(label.name, textX, y - size * .025);
     context.fillStyle = "white";
     context.fillText(label.name, textX, y - size * .025);
   }
-  const endpointRadius = size * .014;
+  const endpointRadius = size * .01;
   for (const point of [points[0], points[points.length - 1]]) {
     context.beginPath();
     context.arc(left + point.x, top + point.y, endpointRadius, 0, Math.PI * 2);
@@ -659,13 +785,76 @@ function drawRouteMap(context: CanvasRenderingContext2D, canvas: HTMLCanvasEleme
   if (current) {
     const point = points[Math.min(points.length - 1, current.index)];
     context.beginPath();
-    context.arc(left + point.x, top + point.y, size * .045, 0, Math.PI * 2);
+    context.arc(left + point.x, top + point.y, size * .04, 0, Math.PI * 2);
     context.fillStyle = "rgba(255,255,255,.22)";
     context.fill();
     context.beginPath();
-    context.arc(left + point.x, top + point.y, size * .022, 0, Math.PI * 2);
+    context.arc(left + point.x, top + point.y, size * .02, 0, Math.PI * 2);
     context.fillStyle = "white";
     context.fill();
   }
+  context.restore();
+}
+
+function drawCaption(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, caption: string, mapPosition: MapPosition) {
+  const fontSize = Math.max(18, canvas.width * .042);
+  const maxWidth = canvas.width * .78;
+  context.save();
+  context.font = `700 ${fontSize}px sans-serif`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  const lines = wrapCanvasText(context, caption, maxWidth).slice(0, 2);
+  const lineHeight = fontSize * 1.35;
+  const padX = fontSize * .75;
+  const padY = fontSize * .5;
+  const textWidth = Math.max(...lines.map(line => context.measureText(line).width));
+  const boxWidth = textWidth + padX * 2;
+  const boxHeight = lines.length * lineHeight + padY * 2;
+  const centerY = mapPosition.startsWith("bottom") ? canvas.height * .16 : canvas.height * .77;
+  context.fillStyle = "rgba(7,15,12,.68)";
+  context.beginPath();
+  context.roundRect((canvas.width - boxWidth) / 2, centerY - boxHeight / 2, boxWidth, boxHeight, fontSize * .45);
+  context.fill();
+  context.fillStyle = "white";
+  lines.forEach((line, index) => context.fillText(line, canvas.width / 2, centerY + (index - (lines.length - 1) / 2) * lineHeight));
+  context.restore();
+}
+
+function wrapCanvasText(context: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  const lines: string[] = [];
+  let current = "";
+  for (const character of text.trim()) {
+    const next = current + character;
+    if (current && context.measureText(next).width > maxWidth) {
+      lines.push(current);
+      current = character;
+    } else current = next;
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [""];
+}
+
+function drawMetadata(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, item: MediaItem, showDateTime: boolean, showPlace: boolean) {
+  const lines = [showDateTime ? formatOutputDateTime(item.capturedAt) : "", showPlace && item.placeName ? `${item.placeName}付近` : ""].filter(Boolean);
+  if (!lines.length) return;
+  const fontSize = Math.max(12, canvas.width * .026);
+  const lineHeight = fontSize * 1.35;
+  const padX = canvas.width * .018;
+  const padY = fontSize * .55;
+  context.save();
+  context.font = `700 ${fontSize}px sans-serif`;
+  const textWidth = Math.max(...lines.map(line => context.measureText(line).width));
+  const boxWidth = textWidth + padX * 2;
+  const boxHeight = lines.length * lineHeight + padY * 2;
+  const left = canvas.width * .045;
+  const bottom = canvas.height * .94;
+  context.fillStyle = "rgba(7,15,12,.68)";
+  context.beginPath();
+  context.roundRect(left, bottom - boxHeight, boxWidth, boxHeight, fontSize * .4);
+  context.fill();
+  context.fillStyle = "white";
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  lines.forEach((line, index) => context.fillText(line, left + padX, bottom - boxHeight + padY + lineHeight * (index + .5)));
   context.restore();
 }
