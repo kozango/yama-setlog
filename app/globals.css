@@ -205,13 +205,16 @@ button { cursor:pointer; }
 .phone-player.ratio-1-1 { width:82%; margin:0 auto; aspect-ratio:1/1; }
 .empty-player { position:absolute; inset:0; display:grid; place-items:center; color:rgba(255,255,255,.65); font-size:11px; line-height:1.6; text-align:center; }
 .capture-time { position:absolute; z-index:4; left:10px; bottom:10px; padding:6px 8px; border-radius:7px; background:rgba(7,15,12,.68); color:white; font-size:9px; font-weight:700; letter-spacing:.03em; pointer-events:none; }
-.route-map-overlay { position:absolute; z-index:3; top:10px; right:10px; width:42%; aspect-ratio:1; padding:5px; overflow:visible; border:1px solid rgba(255,255,255,.16); border-radius:11px; background:rgba(5,17,13,.58); filter:drop-shadow(0 3px 7px rgba(0,0,0,.28)); pointer-events:none; }
+.route-map-overlay { position:absolute; z-index:3; top:10px; right:10px; width:58%; aspect-ratio:1; padding:5px; overflow:visible; border:1px solid rgba(255,255,255,.16); border-radius:11px; background:rgba(5,17,13,.58); filter:drop-shadow(0 3px 7px rgba(0,0,0,.28)); pointer-events:none; }
 .route-map-full,.route-map-travelled { fill:none; stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke; }
 .route-map-full { stroke:rgba(255,255,255,.35); stroke-width:1.5; }
 .route-map-travelled { stroke:rgba(255,255,255,.96); stroke-width:2.7; }
 .route-map-end { fill:white; }
+.route-map-label circle { fill:white; }
+.route-map-label text { fill:white; font-size:5px; font-weight:700; paint-order:stroke; stroke:rgba(3,12,9,.9); stroke-width:1.6px; stroke-linejoin:round; }
 .route-map-pulse { fill:rgba(255,255,255,.22); }
 .route-map-current { fill:white; stroke:rgba(9,28,22,.8); stroke-width:1; vector-effect:non-scaling-stroke; }
+.phone-player.ratio-16-9 .route-map-overlay { width:42%; }
 .preview-meta { margin-top:10px; display:flex; justify-content:space-between; color:var(--muted); font-size:9px; }
 .preview-meta b { color:var(--green); }
 .preview-card .timeline { margin-top:8px; }
