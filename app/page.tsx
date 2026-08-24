@@ -373,7 +373,7 @@ function GpxRouteOverlay({ gpx, current, density, position }: { gpx: GpxData; cu
     <path className="route-map-travelled" d={travelled} />
     <circle className="route-map-end" cx={start.x} cy={start.y} r="1.8" />
     <circle className="route-map-end" cx={end.x} cy={end.y} r="1.8" />
-    {labels.map(label => <g className="route-map-label" key={`${label.index}-${label.name}`}><circle cx={label.x} cy={label.y} r="1.2" /><text x={label.x > 72 ? Math.max(8, label.x - 2.5) : Math.min(92, label.x + 2.5)} y={Math.max(6, label.y - 2)} textAnchor={label.x > 72 ? "end" : "start"}>{label.name}</text></g>)}
+    {labels.map(label => <g className="route-map-label" key={`${label.index}-${label.name}`}><circle cx={label.x} cy={label.y} r=".75" /><text x={label.x > 72 ? Math.max(8, label.x - 2.2) : Math.min(92, label.x + 2.2)} y={Math.max(6, label.y - 1.7)} textAnchor={label.x > 72 ? "end" : "start"}>{label.name}</text></g>)}
     {current && <><circle className="route-map-pulse" cx={currentPoint.x} cy={currentPoint.y} r="5" /><circle className="route-map-current" cx={currentPoint.x} cy={currentPoint.y} r="2.6" /></>}
   </svg>;
 }
@@ -641,16 +641,14 @@ function drawFrame(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
 }
 
 function drawRouteMap(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, gpx: GpxData, current: GpxPoint | null, density: LabelDensity, position: MapPosition) {
-  const size = Math.min(canvas.width * .42, canvas.height * .3);
+  const size = Math.min(canvas.width * .35, canvas.height * .42);
   const left = position.endsWith("left") ? canvas.width * .035 : canvas.width - size - canvas.width * .035;
   const top = position.startsWith("top") ? canvas.height * .035 : canvas.height - size - canvas.height * .16;
   const points = projectRoute(gpx.points, size, size, size * .09);
   if (points.length < 2) return;
   context.save();
-  context.fillStyle = "rgba(5,17,13,.58)";
-  context.beginPath();
-  context.roundRect(left, top, size, size, size * .07);
-  context.fill();
+  context.shadowColor = "rgba(0,0,0,.68)";
+  context.shadowBlur = Math.max(3, size * .025);
   const drawPath = (until: number, color: string, lineWidth: number) => {
     context.beginPath();
     points.slice(0, until + 1).forEach((point, index) => index ? context.lineTo(left + point.x, top + point.y) : context.moveTo(left + point.x, top + point.y));
@@ -663,7 +661,7 @@ function drawRouteMap(context: CanvasRenderingContext2D, canvas: HTMLCanvasEleme
   drawPath(points.length - 1, "rgba(255,255,255,.35)", Math.max(1.5, size * .012));
   if (current) drawPath(current.index, "rgba(255,255,255,.96)", Math.max(2.5, size * .021));
   const labels = selectRouteLabels(gpx.points, points, density);
-  context.font = `700 ${Math.max(7, size * .038)}px sans-serif`;
+  context.font = `700 ${Math.max(9, size * .04)}px sans-serif`;
   context.textBaseline = "middle";
   context.lineJoin = "round";
   for (const label of labels) {
@@ -676,12 +674,12 @@ function drawRouteMap(context: CanvasRenderingContext2D, canvas: HTMLCanvasEleme
     context.textAlign = label.x > size * .72 ? "right" : "left";
     const textX = x + (label.x > size * .72 ? -size * .025 : size * .025);
     context.strokeStyle = "rgba(3,12,9,.88)";
-    context.lineWidth = Math.max(2, size * .016);
+    context.lineWidth = Math.max(1.2, size * .007);
     context.strokeText(label.name, textX, y - size * .025);
     context.fillStyle = "white";
     context.fillText(label.name, textX, y - size * .025);
   }
-  const endpointRadius = size * .014;
+  const endpointRadius = size * .01;
   for (const point of [points[0], points[points.length - 1]]) {
     context.beginPath();
     context.arc(left + point.x, top + point.y, endpointRadius, 0, Math.PI * 2);
@@ -691,11 +689,11 @@ function drawRouteMap(context: CanvasRenderingContext2D, canvas: HTMLCanvasEleme
   if (current) {
     const point = points[Math.min(points.length - 1, current.index)];
     context.beginPath();
-    context.arc(left + point.x, top + point.y, size * .045, 0, Math.PI * 2);
+    context.arc(left + point.x, top + point.y, size * .04, 0, Math.PI * 2);
     context.fillStyle = "rgba(255,255,255,.22)";
     context.fill();
     context.beginPath();
-    context.arc(left + point.x, top + point.y, size * .022, 0, Math.PI * 2);
+    context.arc(left + point.x, top + point.y, size * .02, 0, Math.PI * 2);
     context.fillStyle = "white";
     context.fill();
   }
