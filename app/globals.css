@@ -114,7 +114,6 @@ button { cursor:pointer; }
 .route-overlay { position:absolute; right:2.5%; top:4%; width:39%; height:88%; color:white; filter:drop-shadow(0 2px 5px rgba(0,0,0,.3)); }
 .movie-title,.route-overlay,.location-stamp,.altitude,.elevation-profile { pointer-events:none; }
 .route-overlay svg { width:100%; height:100%; overflow:visible; }
-.north-note { position:absolute; right:4px; top:3px; padding:4px 7px; border:1px solid rgba(255,255,255,.25); border-radius:9px; background:rgba(9,20,17,.16); color:rgba(255,255,255,.8); font-size:clamp(6px,.7vw,8px); }
 .route-full,.route-progress { fill:none; stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke; }
 .route-full { stroke:rgba(255,255,255,.38); stroke-width:2; }
 .route-progress { stroke:white; stroke-width:3.4; }
@@ -127,9 +126,9 @@ button { cursor:pointer; }
 .location-stamp { position:absolute; right:4.5%; bottom:6%; color:white; text-align:right; text-shadow:0 2px 8px rgba(0,0,0,.6); }
 .location-stamp small,.location-stamp strong { display:block; }
 .location-stamp small { font-size:clamp(7px,.8vw,9px); letter-spacing:.12em; opacity:.78; }
-.location-stamp strong { font-family:"Yu Mincho","Hiragino Mincho ProN",serif; font-size:clamp(15px,3.1vw,31px); font-weight:500; }
+.location-stamp strong { margin-top:3px; font-size:clamp(11px,1.8vw,20px); font-weight:700; letter-spacing:.02em; }
 .location-stamp.large { bottom:35%; }
-.location-stamp.large strong { font-size:clamp(25px,5vw,54px); }
+.location-stamp.large strong { font-size:clamp(18px,3.4vw,36px); }
 .altitude { position:absolute; right:4.5%; bottom:2.7%; color:white; font-size:clamp(8px,1.2vw,13px); text-shadow:0 2px 8px rgba(0,0,0,.6); }
 .elevation-profile { position:absolute; left:5%; right:5%; bottom:6%; height:25%; padding:10px 13px; border-radius:11px; color:white; background:rgba(9,20,17,.46); backdrop-filter:blur(7px); }
 .elevation-profile > div { display:flex; justify-content:space-between; font-size:clamp(7px,.9vw,10px); }
