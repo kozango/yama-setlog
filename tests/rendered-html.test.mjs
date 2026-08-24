@@ -13,15 +13,18 @@ async function render() {
   );
 }
 
-test("renders the Yama Setlog editor", async () => {
+test("renders the mobile Yama Setlog creation flow", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
   assert.match(html, /<title>山せとろぐ（仮）<\/title>/);
-  assert.match(html, /山行ムービーを作る/);
-  assert.match(html, /GPXの見せ方/);
-  assert.match(html, /ルート上のラベル/);
+  assert.match(html, /山行の30秒ムービーを作る/);
+  assert.match(html, /素材を選ぶ/);
+  assert.match(html, /仕上がりを選ぶ/);
+  assert.match(html, /完成イメージを確認/);
+  assert.match(html, /GPXを選択すると作成できます/);
+  assert.doesNotMatch(html, /北が上・実際のGPX形状|穂高岳山荘|3,110 m|DAY 2/);
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview/);
 });
