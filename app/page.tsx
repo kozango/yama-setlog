@@ -9,6 +9,8 @@ type GenerationState = "idle" | "exporting" | "ready" | "error";
 type PreviewMode = "clip" | "sequence";
 type GpxPoint = { index: number; lat: number; lon: number; ele: number; time: number; name: string | null };
 type GpxData = { name: string; points: GpxPoint[]; startTime: number; endTime: number };
+type PlaceGpxPoint = { lat: number; lon: number; name: string };
+type PlaceGpxData = { name: string; points: PlaceGpxPoint[] };
 type MediaItem = {
   id: string;
   name: string;
@@ -35,8 +37,11 @@ export default function Home() {
   const [showDateTime, setShowDateTime] = useState(true);
   const [showPlace, setShowPlace] = useState(true);
   const [gpxName, setGpxName] = useState("");
-  const [gpxData, setGpxData] = useState<GpxData | null>(null);
+  const [routeGpxData, setRouteGpxData] = useState<GpxData | null>(null);
   const [gpxError, setGpxError] = useState("");
+  const [placeGpxName, setPlaceGpxName] = useState("");
+  const [placeGpxData, setPlaceGpxData] = useState<PlaceGpxData | null>(null);
+  const [placeGpxError, setPlaceGpxError] = useState("");
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [previewId, setPreviewId] = useState("");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("clip");
@@ -52,6 +57,8 @@ export default function Home() {
   const outputUrl = useRef("");
   const sequenceStart = useRef(0);
 
+  const placeMerge = useMemo(() => routeGpxData ? mergePlaceNames(routeGpxData, placeGpxData) : null, [routeGpxData, placeGpxData]);
+  const gpxData = placeMerge?.data ?? null;
   const selectedMedia = useMemo(() => media.filter(item => item.selected), [media]);
   const previewMedia = selectedMedia.find(item => item.id === previewId) ?? selectedMedia[0];
   const hasNamedPlaces = Boolean(gpxData?.points.some(point => point.name));
@@ -88,16 +95,60 @@ export default function Home() {
     try {
       const parsed = parseGpx(await file.text());
       setGpxName(file.name);
-      setGpxData(parsed);
+      setRouteGpxData(parsed);
       setGpxError("");
+      setPlaceGpxName("");
+      setPlaceGpxData(null);
+      setPlaceGpxError("");
       setMedia(items => matchAndSortMedia(items, parsed));
       resetGeneration();
       stopSequence();
     } catch (error) {
       setGpxName("");
-      setGpxData(null);
+      setRouteGpxData(null);
+      setPlaceGpxName("");
+      setPlaceGpxData(null);
+      setPlaceGpxError("");
+      setMedia(items => matchAndSortMedia(items, null));
       setGpxError(error instanceof Error ? error.message : "GPXを読み込めませんでした。");
+      resetGeneration();
+      stopSequence();
     }
+  }
+
+  async function readPlaceGpx(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file || !routeGpxData) return;
+    try {
+      const parsed = parsePlaceGpx(await file.text());
+      const merged = mergePlaceNames(routeGpxData, parsed);
+      if (!merged.matched) throw new Error("ルートから500m以内に一致する地名がありませんでした。");
+      setPlaceGpxName(file.name);
+      setPlaceGpxData(parsed);
+      setPlaceGpxError("");
+      setMedia(items => matchAndSortMedia(items, merged.data));
+      resetGeneration();
+      stopSequence();
+    } catch (error) {
+      setPlaceGpxName("");
+      setPlaceGpxData(null);
+      setMedia(items => matchAndSortMedia(items, routeGpxData));
+      setPlaceGpxError(error instanceof Error ? error.message : "地名GPXを読み込めませんでした。");
+      resetGeneration();
+      stopSequence();
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function clearPlaceGpx() {
+    if (!routeGpxData) return;
+    setPlaceGpxName("");
+    setPlaceGpxData(null);
+    setPlaceGpxError("");
+    setMedia(items => matchAndSortMedia(items, routeGpxData));
+    resetGeneration();
+    stopSequence();
   }
 
   async function readVideos(event: ChangeEvent<HTMLInputElement>) {
@@ -250,8 +301,10 @@ export default function Home() {
 
       <section className="phone-card">
         <div className="phone-step"><i>1</i><span><strong>素材を選ぶ</strong><small>GPXと写真・動画の両方が必要です</small></span></div>
-        <label className="phone-upload"><span className="upload-icon">⌁</span><span className="upload-copy"><strong>{gpxName || "GPXを選択"}</strong><small>{gpxData ? `${gpxData.points.length}地点・${formatLocalDateTime(gpxData.startTime)}から` : "撮影時刻との照合に使います"}</small></span><b className={gpxData ? "upload-ok" : ""}>{gpxData ? "✓" : "選択"}</b><input type="file" accept=".gpx,application/gpx+xml" onChange={readGpx} /></label>
+        <label className="phone-upload"><span className="upload-icon">⌁</span><span className="upload-copy"><strong>{gpxName || "ルートGPXを選択"}</strong><small>{gpxData ? `${gpxData.points.length}地点・${formatLocalDateTime(gpxData.startTime)}から` : "軌跡と撮影時刻に使います"}</small></span><b className={gpxData ? "upload-ok" : ""}>{gpxData ? "✓" : "選択"}</b><input type="file" accept=".gpx,application/gpx+xml" onChange={readGpx} /></label>
         {gpxError && <p className="inline-error">{gpxError}</p>}
+        {routeGpxData && <div className="place-gpx-row"><label className="phone-upload place-gpx-upload"><span className="upload-icon place">＋</span><span className="upload-copy"><strong>{placeGpxName || "地名GPXを追加（任意）"}</strong><small>{placeGpxData ? `${placeMerge?.matched ?? 0}地点をルートへ合成` : "山レコ等から地名だけを合成します"}</small></span><b className={placeGpxData ? "upload-ok" : ""}>{placeGpxData ? "変更" : "追加"}</b><input type="file" accept=".gpx,application/gpx+xml" onChange={readPlaceGpx} /></label>{placeGpxData && <button type="button" className="place-gpx-clear" onClick={clearPlaceGpx}>地名を外す</button>}</div>}
+        {placeGpxError && <p className="inline-error">{placeGpxError}</p>}
         <label className="phone-upload"><span className="upload-icon warm">▶</span><span className="upload-copy"><strong>写真・動画を選択</strong><small>{media.length ? `${media.length}本を撮影日時順に整理済み` : "まとめて選択できます"}</small></span><b className={media.length ? "upload-ok" : ""}>{media.length ? `${selectedMedia.length}本` : "選択"}</b><input type="file" accept="video/*,image/*" multiple onChange={readVideos} /></label>
         <div className="ready-checks"><span className={gpxData ? "done" : ""}>{gpxData ? "✓" : "1"} GPX</span><i /><span className={selectedMedia.length ? "done" : ""}>{selectedMedia.length ? "✓" : "2"} 動画</span><i /><span className={gpxData && selectedMedia.length ? "done" : ""}>{gpxData && selectedMedia.length ? "✓" : "3"} 作成可能</span></div>
       </section>
@@ -315,6 +368,49 @@ function parseGpx(xml: string): GpxData {
   const track = documentNode.getElementsByTagNameNS("*", "trk")[0];
   const name = track?.getElementsByTagNameNS("*", "name")[0]?.textContent?.trim() || "山行記録";
   return { name, points, startTime: points[0].time, endTime: points[points.length - 1].time };
+}
+
+function parsePlaceGpx(xml: string): PlaceGpxData {
+  const documentNode = new DOMParser().parseFromString(xml, "application/xml");
+  if (documentNode.querySelector("parsererror")) throw new Error("地名GPXを読み込めませんでした。");
+  const pointNodes = ["trkpt", "wpt", "rtept"].flatMap(tag => Array.from(documentNode.getElementsByTagNameNS("*", tag)));
+  const seen = new Set<string>();
+  const points = pointNodes.flatMap(node => {
+    const name = node.getElementsByTagNameNS("*", "name")[0]?.textContent?.trim();
+    const lat = Number(node.getAttribute("lat"));
+    const lon = Number(node.getAttribute("lon"));
+    if (!name || !Number.isFinite(lat) || !Number.isFinite(lon) || seen.has(name)) return [];
+    seen.add(name);
+    return [{ lat, lon, name }];
+  });
+  if (!points.length) throw new Error("このGPXには座標付きの地名がありませんでした。");
+  const track = documentNode.getElementsByTagNameNS("*", "trk")[0];
+  const name = track?.getElementsByTagNameNS("*", "name")[0]?.textContent?.trim() || "地名GPX";
+  return { name, points };
+}
+
+function mergePlaceNames(route: GpxData, places: PlaceGpxData | null) {
+  if (!places) return { data: route, matched: 0 };
+  const points = route.points.map(point => ({ ...point }));
+  const used = new Set<number>();
+  let matched = 0;
+  for (const place of places.points) {
+    let nearestIndex = -1;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    points.forEach((point, index) => {
+      if (used.has(index)) return;
+      const distance = haversineMeters(place, point);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+    if (nearestIndex < 0 || nearestDistance > 500) continue;
+    if (!points[nearestIndex].name) points[nearestIndex].name = place.name;
+    used.add(nearestIndex);
+    matched += 1;
+  }
+  return { data: { ...route, points }, matched };
 }
 
 function matchAndSortMedia(items: MediaItem[], gpx: GpxData | null) {
