@@ -6,6 +6,7 @@ type Ratio = "16:9" | "9:16" | "1:1";
 type GpxStyle = "line" | "location" | "profile";
 type LabelDensity = "none" | "major" | "detail";
 type GenerationState = "idle" | "exporting" | "ready" | "error";
+type PreviewMode = "clip" | "sequence";
 type MediaItem = {
   id: string;
   name: string;
@@ -40,6 +41,9 @@ export default function Home() {
   const [gpxName, setGpxName] = useState("");
   const [media, setMedia] = useState<MediaItem[]>([]);
   const [previewId, setPreviewId] = useState("");
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("clip");
+  const [sequencePlaying, setSequencePlaying] = useState(false);
+  const [sequenceProgress, setSequenceProgress] = useState(0);
   const [mediaOpen, setMediaOpen] = useState(true);
   const [generationState, setGenerationState] = useState<GenerationState>("idle");
   const [generationProgress, setGenerationProgress] = useState(0);
@@ -48,17 +52,31 @@ export default function Home() {
   const generationRun = useRef(0);
   const objectUrls = useRef<string[]>([]);
   const outputUrl = useRef("");
+  const sequenceStart = useRef(0);
 
   const selectedMedia = useMemo(() => media.filter(item => item.selected), [media]);
   const previewMedia = selectedMedia.find(item => item.id === previewId) ?? selectedMedia[0];
 
-  const totalTime = useMemo(() => {
-    if (duration === "auto") return "00:42";
-    const value = Number(duration);
-    return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
-  }, [duration]);
   const generationBusy = generationState === "exporting";
   const targetSeconds = duration === "auto" ? Math.min(60, Math.max(12, selectedMedia.length * 4)) : Number(duration);
+  const totalTime = formatClock(targetSeconds);
+
+  useEffect(() => {
+    if (!sequencePlaying || !selectedMedia.length) return;
+    const clipSeconds = targetSeconds / selectedMedia.length;
+    const timer = window.setInterval(() => {
+      const elapsed = (window.performance.now() - sequenceStart.current) / 1000;
+      if (elapsed >= targetSeconds) {
+        setSequenceProgress(100);
+        setSequencePlaying(false);
+        return;
+      }
+      const index = Math.min(selectedMedia.length - 1, Math.floor(elapsed / clipSeconds));
+      setPreviewId(selectedMedia[index].id);
+      setSequenceProgress(elapsed / targetSeconds * 100);
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [sequencePlaying, selectedMedia, targetSeconds]);
 
   useEffect(() => () => {
     objectUrls.current.forEach(url => URL.revokeObjectURL(url));
@@ -86,6 +104,7 @@ export default function Home() {
     objectUrls.current = next.map(item => item.url);
     setMedia(next);
     setPreviewId(next[0].id);
+    stopSequence();
     setMediaOpen(true);
     resetGeneration();
   }
@@ -127,11 +146,13 @@ export default function Home() {
   function toggleMedia(id: string) {
     setMedia(items => items.map(item => item.id === id ? { ...item, selected: !item.selected } : item));
     resetGeneration();
+    stopSequence();
   }
 
   function setAllMedia(selected: boolean) {
     setMedia(items => items.map(item => ({ ...item, selected })));
     resetGeneration();
+    stopSequence();
   }
 
   function resetGeneration() {
@@ -153,6 +174,26 @@ export default function Home() {
     const current = selectedMedia.findIndex(item => item.id === previewMedia.id);
     const next = (current + direction + selectedMedia.length) % selectedMedia.length;
     setPreviewId(selectedMedia[next].id);
+  }
+
+  function startSequence() {
+    if (!selectedMedia.length) return;
+    setPreviewMode("sequence");
+    setPreviewId(selectedMedia[0].id);
+    setSequenceProgress(0);
+    sequenceStart.current = window.performance.now();
+    setSequencePlaying(true);
+  }
+
+  function stopSequence() {
+    setSequencePlaying(false);
+    setSequenceProgress(0);
+    setPreviewMode("clip");
+  }
+
+  function showClip(id: string) {
+    stopSequence();
+    setPreviewId(id);
   }
 
   function updateDuration(id: string, seconds: number) {
@@ -207,7 +248,7 @@ export default function Home() {
                     <span className="media-order">{String(index + 1).padStart(2, "0")}</span>
                     <span className="media-copy"><strong>{item.name}</strong><small>{item.detail}</small></span>
                   </label>
-                  <button type="button" className="preview-target" disabled={!item.selected} onClick={() => setPreviewId(item.id)}>{item.id === previewMedia?.id ? "表示中" : "確認"}</button>
+                  <button type="button" className="preview-target" disabled={!item.selected} onClick={() => showClip(item.id)}>{previewMode === "clip" && item.id === previewMedia?.id ? "表示中" : "確認"}</button>
                 </div>)}
               </div>}
               {selectedMedia.length === 0 && <p className="media-warning">動画が選ばれていません。使用する動画にチェックを入れてください。</p>}
@@ -217,7 +258,7 @@ export default function Home() {
           <section className="setting-section">
             <div className="section-heading"><h2>2. 完成動画の長さ</h2><span>{duration === "auto" ? "おまかせ" : `${duration}秒`}</span></div>
             <div className="choice-row four">
-              {["30", "60", "90", "auto"].map((value) => <button type="button" key={value} className={duration === value ? "selected" : ""} onClick={() => setDuration(value)}>{value === "auto" ? "おまかせ" : `${value}秒`}</button>)}
+              {["30", "60", "90", "auto"].map((value) => <button type="button" key={value} className={duration === value ? "selected" : ""} onClick={() => { setDuration(value); stopSequence(); resetGeneration(); }}>{value === "auto" ? "おまかせ" : `${value}秒`}</button>)}
             </div>
           </section>
 
@@ -253,15 +294,19 @@ export default function Home() {
         </aside>
 
         <section className="preview-panel">
-          <div className="preview-heading"><strong>完成イメージ</strong><span className={selectedMedia.length ? "selection-ok" : "selection-empty"}><i />{selectedMedia.length}本を動画に使用</span></div>
+          <div className="preview-heading"><strong>プレビュー</strong><span className={selectedMedia.length ? "selection-ok" : "selection-empty"}><i />{selectedMedia.length}本を動画に使用</span></div>
+          <div className="preview-guide">
+            <span><strong>まず、完成イメージを確認</strong><small>書き出す前に、選んだ素材を{targetSeconds}秒の順番でそのまま再生できます。</small></span>
+            <button type="button" onClick={startSequence} disabled={!selectedMedia.length}>{sequencePlaying ? `再生中 ${Math.round(sequenceProgress)}%` : previewMode === "sequence" && sequenceProgress === 100 ? `▶ もう一度見る（${targetSeconds}秒）` : `▶ ${targetSeconds}秒の完成イメージを見る`}</button>
+          </div>
           <div className="preview-context">
-            <span>いま確認している動画</span>
+            <span>{previewMode === "sequence" ? "完成プレビュー" : "素材を確認中"}</span>
             <strong>{previewMedia?.name ?? "動画を選択してください"}</strong>
             {previewMedia && <small>{selectedMedia.findIndex(item => item.id === previewMedia.id) + 1} / {selectedMedia.length}</small>}
           </div>
           <div className="stage">
             <div className={`player ratio-${ratio.replace(":", "-")} style-${gpxStyle}`}>
-              {previewMedia?.url ? previewMedia.kind === "video" ? <video className="uploaded-media" key={previewMedia.url} src={previewMedia.url} controls playsInline autoPlay muted onEnded={() => movePreview(1)} onLoadedMetadata={event => updateDuration(previewMedia.id, event.currentTarget.duration)} /> : <img className="uploaded-media" src={previewMedia.url} alt={previewMedia.name} /> : <><div className="scene" aria-hidden="true"><span className="sun" /><span className="mountain far" /><span className="mountain near" /><span className="ridge" /></div><div className="sample-notice">まだ動画がありません。「写真・動画を追加」から実ファイルを選んでください。</div></>}
+              {previewMedia?.url ? previewMedia.kind === "video" ? <video className="uploaded-media" key={`${previewMode}-${previewMedia.url}`} src={previewMedia.url} controls={previewMode === "clip"} playsInline autoPlay muted loop={previewMode === "sequence"} onEnded={() => { if (previewMode === "clip") movePreview(1); }} onLoadedMetadata={event => updateDuration(previewMedia.id, event.currentTarget.duration)} /> : <img className="uploaded-media" src={previewMedia.url} alt={previewMedia.name} /> : <><div className="scene" aria-hidden="true"><span className="sun" /><span className="mountain far" /><span className="mountain near" /><span className="ridge" /></div><div className="sample-notice">まだ動画がありません。「写真・動画を追加」から実ファイルを選んでください。</div></>}
               <div className="movie-title">山せとろぐ（仮）｜前穂・奥穂</div>
               {gpxName && showMap && gpxStyle === "line" && <RouteOverlay labels={labels} />}
               {gpxName && showLocation && gpxStyle !== "profile" && <div className={gpxStyle === "location" ? "location-stamp large" : "location-stamp"}><small>現在地｜DAY 2・06:17</small><strong>穂高岳山荘</strong></div>}
@@ -270,15 +315,16 @@ export default function Home() {
             </div>
           </div>
           <div className="playback">
-            <div className="timeline"><i /></div>
-            <div className="time-row"><span>00:26</span><span>{totalTime}</span></div>
+            <div className={previewMode === "sequence" ? "timeline active" : "timeline"}><i style={{ width: previewMode === "sequence" ? `${sequenceProgress}%` : "0%" }} /></div>
+            <div className="time-row"><span>{previewMode === "sequence" ? formatClock(targetSeconds * sequenceProgress / 100) : "00:00"}</span><span>{totalTime}</span></div>
             {generationState !== "idle" && <div className={`generation-status ${generationState}`} role="status" aria-live="polite">
               <div><span>{generationState === "exporting" ? "完成動画を書き出しています（このタブを閉じないでください）" : generationState === "ready" ? "完成動画ができました" : "書き出しに失敗しました"}</span><strong>{generationState === "error" ? "!" : `${generationProgress}%`}</strong></div>
               <div className="generation-progress"><i style={{ width: `${generationProgress}%` }} /></div>
               {generationState === "ready" && output && <p>{formatBytes(output.size)}・{targetSeconds}秒。下のボタンから端末へ保存できます。</p>}
               {generationState === "error" && <p>{generationError}</p>}
             </div>}
-            <div className="actions"><span>{!gpxName ? "GPXを選択してください" : selectedMedia.length ? `対象 ${selectedMedia.length}本・書き出し目安 約${targetSeconds}秒` : "動画を1本以上選択してください"}</span>{generationState === "ready" && output ? <a className="primary-action" href={output.url} download={output.name}>完成動画をダウンロード</a> : <button type="button" onClick={generate} disabled={!gpxName || !selectedMedia.length || generationBusy}>{generationBusy ? `書き出し中 ${generationProgress}%` : generationState === "error" ? "もう一度書き出す" : "動画を書き出す"}</button>}</div>
+            <div className="export-explainer"><strong>端末に保存したいとき</strong><span>プレビュー確認後に押してください。{targetSeconds}秒版の書き出しには約{targetSeconds}秒かかります。</span></div>
+            <div className="actions"><span>{!gpxName ? "GPXを選択してください" : selectedMedia.length ? `完成後、この場所にダウンロードボタンが出ます` : "動画を1本以上選択してください"}</span>{generationState === "ready" && output ? <a className="primary-action" href={output.url} download={output.name}>完成動画をダウンロード</a> : <button type="button" onClick={generate} disabled={!gpxName || !selectedMedia.length || generationBusy}>{generationBusy ? `書き出し中 ${generationProgress}%` : generationState === "error" ? "もう一度書き出す" : "この内容で完成動画を書き出す"}</button>}</div>
           </div>
         </section>
       </div>
@@ -296,6 +342,11 @@ function formatDuration(seconds: number) {
   const minutes = Math.floor(rounded / 60);
   const rest = rounded % 60;
   return minutes ? `${minutes}:${String(rest).padStart(2, "0")}` : `${rest}秒`;
+}
+
+function formatClock(seconds: number) {
+  const rounded = Math.max(0, Math.floor(seconds));
+  return `${String(Math.floor(rounded / 60)).padStart(2, "0")}:${String(rounded % 60).padStart(2, "0")}`;
 }
 
 type ExportOptions = {
