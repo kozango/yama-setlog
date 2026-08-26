@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 type Ratio = "16:9" | "9:16" | "1:1";
 type LabelDensity = "none" | "major" | "detail";
@@ -210,10 +211,13 @@ export default function Home() {
       if (generationRun.current !== run) return;
       const url = URL.createObjectURL(result.blob);
       outputUrl.current = url;
-      setOutput({ url, name: `yama-setlog.${result.extension}`, size: result.blob.size });
-      setPreviewId(selectedMedia[0].id);
-      setGenerationProgress(100);
-      setGenerationState("ready");
+      flushSync(() => {
+        setOutput({ url, name: `yama-setlog.${result.extension}`, size: result.blob.size });
+        setPreviewId(selectedMedia[0].id);
+        setGenerationProgress(100);
+        setGenerationState("ready");
+      });
+      window.scrollTo({ top: 0, behavior: "auto" });
     } catch (error) {
       if (generationRun.current !== run) return;
       setGenerationError(error instanceof Error ? error.message : "動画を書き出せませんでした。");
@@ -284,11 +288,11 @@ export default function Home() {
     resetGeneration();
   }
 
-  if (generationState === "exporting") return <main className="phone-app"><header className="phone-header"><strong>山せとろぐ（仮）</strong></header><section className="processing-screen"><div className="processing-ring" style={{ "--progress": `${generationProgress * 3.6}deg` } as { "--progress": string }}><span>{generationProgress}%</span></div><h1>完成動画を書き出しています</h1><p>{targetSeconds}秒版は、およそ{targetSeconds}秒で完成します。<br />この画面を閉じずにお待ちください。</p><div className="generation-progress"><i style={{ width: `${generationProgress}%` }} /></div></section></main>;
+  if (generationState === "exporting") return <main className="phone-app"><header className="phone-header"><strong>山せとろぐ（仮）</strong></header><section className="processing-screen" aria-live="polite"><div className="processing-ring" style={{ "--progress": `${generationProgress * 3.6}deg` } as { "--progress": string }}><span>{generationProgress}%</span></div><h1>{generationProgress === 0 ? "素材を準備しています" : "完成動画を書き出しています"}</h1><p>{generationProgress === 0 ? "準備ができ次第、自動で書き出しを始めます。" : `あと約${Math.max(1, Math.ceil(targetSeconds * (100 - generationProgress) / 100))}秒です。`}<br />完成すると自動で保存画面に切り替わります。</p><div className="generation-progress"><i style={{ width: `${generationProgress}%` }} /></div></section></main>;
 
   if (generationState === "ready" && output) return <main className="phone-app">
     <header className="phone-header"><strong>山せとろぐ（仮）</strong></header>
-    <section className="result-screen">
+    <section className="result-screen" aria-live="polite">
       <span className="result-check">✓</span><h1>完成しました</h1><p>{targetSeconds}秒・{formatBytes(output.size)}</p>
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <video className="result-video" src={output.url} controls playsInline />
