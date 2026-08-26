@@ -246,8 +246,13 @@ button { cursor:pointer; }
 .caption-field small { color:var(--muted); font-size:7px; }
 .caption-field input { width:100%; padding:10px 11px; border:1px solid var(--line); border-radius:10px; outline:none; background:white; color:var(--ink); font-size:11px; }
 .caption-field input:focus { border-color:var(--green); box-shadow:0 0 0 3px rgba(31,103,83,.1); }
-.preview-meta { margin-top:10px; display:flex; justify-content:space-between; color:var(--muted); font-size:9px; }
-.preview-meta b { color:var(--green); }
+.preview-nav { margin-top:10px; display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:8px; }
+.preview-nav > button { min-width:58px; padding:8px 9px; border:1px solid var(--line); border-radius:9px; background:white; color:var(--green); font-size:15px; font-weight:700; }
+.preview-nav > button span { font-size:9px; vertical-align:1px; }
+.preview-nav > button:disabled { cursor:not-allowed; opacity:.35; }
+.preview-meta { min-width:0; display:flex; align-items:center; justify-content:center; gap:7px; color:var(--muted); font-size:9px; }
+.preview-meta span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.preview-meta b { flex:0 0 auto; color:var(--green); }
 .preview-card .timeline { margin-top:8px; }
 .preview-action { width:100%; margin-top:11px; padding:11px; border:1px solid var(--green); border-radius:11px; background:white; color:var(--green); font-size:11px; font-weight:700; }
 .preview-action:disabled { cursor:not-allowed; opacity:.4; }
