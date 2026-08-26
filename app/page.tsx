@@ -631,7 +631,9 @@ async function exportMovie(options: ExportOptions) {
     for (const item of options.items) {
       if (options.isCancelled()) throw new Error("cancelled");
       if (item.kind === "image") {
+        if (recorder.state === "recording") recorder.pause();
         const image = await loadImage(item.url);
+        if (recorder.state === "paused") recorder.resume();
         await renderSegment(clipSeconds, time => {
           drawFrame(context, canvas, image, options, item);
           renderedSeconds += time;
@@ -645,16 +647,17 @@ async function exportMovie(options: ExportOptions) {
         video.style.cssText = "position:fixed;width:1px;height:1px;left:-10px;bottom:-10px;opacity:.01;pointer-events:none";
         document.body.appendChild(video);
         try {
+          if (recorder.state === "recording") recorder.pause();
           await waitForMedia(video, "loadedmetadata");
           const source = audioContext.createMediaElementSource(video);
           source.connect(audioDestination);
           video.currentTime = 0;
-          try {
-            await video.play();
-          } catch {
+          void video.play().catch(() => {
             video.muted = true;
-            await video.play();
-          }
+            void video.play().catch(() => undefined);
+          });
+          await waitForVideoPlayback(video);
+          if (recorder.state === "paused") recorder.resume();
           await renderSegment(clipSeconds, time => {
             if (video.ended || video.currentTime >= video.duration - 0.08) {
               video.currentTime = 0;
@@ -697,6 +700,19 @@ function waitForMedia(media: HTMLMediaElement, eventName: "loadedmetadata") {
     const cleanup = () => { media.removeEventListener(eventName, ready); media.removeEventListener("error", failed); };
     media.addEventListener(eventName, ready, { once: true });
     media.addEventListener("error", failed, { once: true });
+  });
+}
+
+function waitForVideoPlayback(video: HTMLVideoElement, timeoutMs = 2000) {
+  if (!video.paused && video.readyState >= 2) return Promise.resolve();
+  return new Promise<void>(resolve => {
+    const finish = () => {
+      window.clearTimeout(timer);
+      video.removeEventListener("playing", finish);
+      resolve();
+    };
+    const timer = window.setTimeout(finish, timeoutMs);
+    video.addEventListener("playing", finish, { once: true });
   });
 }
 
