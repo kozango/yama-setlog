@@ -601,6 +601,12 @@ type ExportOptions = {
   onProgress: (value: number) => void;
 };
 
+type PreparedExportItem = {
+  item: MediaItem;
+  source: HTMLImageElement | HTMLVideoElement;
+  audioSource: MediaElementAudioSourceNode | null;
+};
+
 async function exportMovie(options: ExportOptions) {
   if (typeof MediaRecorder === "undefined") throw new Error("このブラウザは端末内での動画書き出しに対応していません。ChromeまたはSafariの最新版でお試しください。");
   const dimensions = options.ratio === "9:16" ? [540, 960] : options.ratio === "1:1" ? [720, 720] : [960, 540];
@@ -626,65 +632,49 @@ async function exportMovie(options: ExportOptions) {
 
   const clipSeconds = options.seconds / options.items.length;
   let renderedSeconds = 0;
-  recorder.start(1000);
+  let recorderStarted = false;
+  let preparedItems: PreparedExportItem[] = [];
   try {
-    for (const item of options.items) {
+    preparedItems = await prepareExportItems(options.items, audioContext, audioDestination, options.isCancelled);
+    drawFrame(context, canvas, preparedItems[0].source, options, preparedItems[0].item);
+    recorder.start(1000);
+    recorderStarted = true;
+    for (const prepared of preparedItems) {
+      const { item, source } = prepared;
       if (options.isCancelled()) throw new Error("cancelled");
-      if (item.kind === "image") {
-        if (recorder.state === "recording") recorder.pause();
-        const image = await loadImage(item.url);
-        if (recorder.state === "paused") recorder.resume();
+      if (source instanceof HTMLImageElement) {
         await renderSegment(clipSeconds, time => {
-          drawFrame(context, canvas, image, options, item);
+          drawFrame(context, canvas, source, options, item);
           renderedSeconds += time;
           options.onProgress(Math.min(99, Math.round(renderedSeconds / options.seconds * 100)));
         }, options.isCancelled);
       } else {
-        const video = document.createElement("video");
-        video.src = item.url;
-        video.playsInline = true;
-        video.preload = "auto";
-        video.style.cssText = "position:fixed;width:1px;height:1px;left:-10px;bottom:-10px;opacity:.01;pointer-events:none";
-        document.body.appendChild(video);
-        try {
-          if (recorder.state === "recording") recorder.pause();
-          await waitForMedia(video, "loadedmetadata");
-          const source = audioContext.createMediaElementSource(video);
-          source.connect(audioDestination);
-          video.currentTime = 0;
-          void video.play().catch(() => {
-            video.muted = true;
-            void video.play().catch(() => undefined);
-          });
-          await waitForVideoPlayback(video);
-          if (recorder.state === "paused") recorder.resume();
-          await renderSegment(clipSeconds, time => {
-            if (video.ended || video.currentTime >= video.duration - 0.08) {
-              video.currentTime = 0;
-              void video.play().catch(() => undefined);
-            }
-            drawFrame(context, canvas, video, options, item);
-            renderedSeconds += time;
-            options.onProgress(Math.min(99, Math.round(renderedSeconds / options.seconds * 100)));
-          }, options.isCancelled);
-          video.pause();
-          source.disconnect();
-        } finally {
-          video.removeAttribute("src");
-          video.load();
-          video.remove();
-        }
+        source.currentTime = 0;
+        void source.play().catch(() => undefined);
+        await renderSegment(clipSeconds, time => {
+          if (source.ended || source.currentTime >= source.duration - 0.08) {
+            source.currentTime = 0;
+            void source.play().catch(() => undefined);
+          }
+          drawFrame(context, canvas, source, options, item);
+          renderedSeconds += time;
+          options.onProgress(Math.min(99, Math.round(renderedSeconds / options.seconds * 100)));
+        }, options.isCancelled);
+        source.pause();
       }
     }
   } finally {
-    if (recorder.state !== "inactive") recorder.stop();
-    await finished;
+    if (recorderStarted && recorder.state !== "inactive") recorder.stop();
+    if (recorderStarted) await finished;
+    cleanupPreparedExportItems(preparedItems);
     stream.getTracks().forEach(track => track.stop());
     await audioContext.close();
   }
   if (options.isCancelled()) throw new Error("cancelled");
   const extension = mimeType.includes("mp4") ? "mp4" : "webm";
-  return { blob: new Blob(chunks, { type: mimeType }), extension };
+  const blob = new Blob(chunks, { type: mimeType });
+  await assertExportDuration(blob, options.seconds);
+  return { blob, extension };
 }
 
 function pickRecordingType() {
@@ -692,8 +682,75 @@ function pickRecordingType() {
   return candidates.find(type => MediaRecorder.isTypeSupported(type)) ?? "video/webm";
 }
 
-function waitForMedia(media: HTMLMediaElement, eventName: "loadedmetadata") {
-  if (media.readyState >= 1) return Promise.resolve();
+async function prepareExportItems(
+  items: MediaItem[],
+  audioContext: AudioContext,
+  audioDestination: MediaStreamAudioDestinationNode,
+  isCancelled: () => boolean,
+) {
+  const prepared: PreparedExportItem[] = [];
+  try {
+    for (const item of items) {
+      if (isCancelled()) throw new Error("cancelled");
+      if (item.kind === "image") {
+        prepared.push({ item, source: await loadImage(item.url), audioSource: null });
+        continue;
+      }
+      const video = document.createElement("video");
+      video.src = item.url;
+      video.playsInline = true;
+      video.preload = "auto";
+      video.style.cssText = "position:fixed;width:1px;height:1px;left:-10px;bottom:-10px;opacity:.01;pointer-events:none";
+      document.body.appendChild(video);
+      let audioSource: MediaElementAudioSourceNode | null = null;
+      try {
+        await waitForMedia(video, "loadedmetadata");
+        audioSource = audioContext.createMediaElementSource(video);
+        audioSource.connect(audioDestination);
+        await startVideo(video);
+        await waitForVideoPlayback(video);
+        video.pause();
+        video.currentTime = 0;
+        await waitForMedia(video, "canplay");
+        prepared.push({ item, source: video, audioSource });
+      } catch (error) {
+        audioSource?.disconnect();
+        video.removeAttribute("src");
+        video.load();
+        video.remove();
+        throw error;
+      }
+    }
+    return prepared;
+  } catch (error) {
+    cleanupPreparedExportItems(prepared);
+    throw error;
+  }
+}
+
+function cleanupPreparedExportItems(items: PreparedExportItem[]) {
+  for (const prepared of items) {
+    prepared.audioSource?.disconnect();
+    if (!(prepared.source instanceof HTMLVideoElement)) continue;
+    prepared.source.pause();
+    prepared.source.removeAttribute("src");
+    prepared.source.load();
+    prepared.source.remove();
+  }
+}
+
+async function startVideo(video: HTMLVideoElement) {
+  try {
+    await video.play();
+  } catch {
+    video.muted = true;
+    await video.play();
+  }
+}
+
+function waitForMedia(media: HTMLMediaElement, eventName: "loadedmetadata" | "canplay") {
+  const requiredState = eventName === "loadedmetadata" ? 1 : 3;
+  if (media.readyState >= requiredState) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
     const ready = () => { cleanup(); resolve(); };
     const failed = () => { cleanup(); reject(new Error("選択した動画を読み込めませんでした。")); };
@@ -714,6 +771,23 @@ function waitForVideoPlayback(video: HTMLVideoElement, timeoutMs = 2000) {
     const timer = window.setTimeout(finish, timeoutMs);
     video.addEventListener("playing", finish, { once: true });
   });
+}
+
+async function assertExportDuration(blob: Blob, expectedSeconds: number) {
+  const url = URL.createObjectURL(blob);
+  const video = document.createElement("video");
+  video.preload = "metadata";
+  video.src = url;
+  try {
+    await waitForMedia(video, "loadedmetadata");
+    if (Number.isFinite(video.duration) && Math.abs(video.duration - expectedSeconds) > 1) {
+      throw new Error(`書き出し尺が${Math.round(video.duration)}秒になりました。再読み込み後にもう一度お試しください。`);
+    }
+  } finally {
+    video.removeAttribute("src");
+    video.load();
+    URL.revokeObjectURL(url);
+  }
 }
 
 function loadImage(url: string) {
