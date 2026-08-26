@@ -30,6 +30,7 @@ test("renders the mobile Yama Setlog creation flow", async () => {
   assert.match(html, /地図の位置/);
   assert.match(html, /撮影日時/);
   assert.match(html, /近くの地名/);
+  assert.match(html, /キャプション位置/);
   assert.match(html, /GPXを選択すると作成できます/);
   assert.doesNotMatch(html, /北が上・実際のGPX形状|穂高岳山荘|3,110 m|DAY 2/);
   assert.doesNotMatch(html, /codex-preview|SkeletonPreview/);

@@ -221,8 +221,9 @@ button { cursor:pointer; }
 .capture-meta { position:absolute; z-index:4; left:10px; bottom:42px; max-width:78%; padding:6px 8px; border-radius:7px; background:rgba(7,15,12,.68); color:white; font-size:8px; font-weight:700; letter-spacing:.02em; pointer-events:none; }
 .capture-meta time,.capture-meta span { display:block; }
 .capture-meta span { margin-top:2px; color:rgba(255,255,255,.82); }
-.clip-caption { position:absolute; z-index:4; right:10%; bottom:78px; left:10%; padding:7px 9px; border-radius:8px; background:rgba(7,15,12,.68); color:white; font-size:10px; font-weight:700; line-height:1.45; text-align:center; pointer-events:none; }
-.phone-player.map-bottom-left .clip-caption,.phone-player.map-bottom-right .clip-caption { top:13%; bottom:auto; }
+.clip-caption { position:absolute; z-index:4; top:50%; right:10%; left:10%; padding:7px 9px; border-radius:8px; background:rgba(7,15,12,.68); color:white; font-size:10px; font-weight:700; line-height:1.45; text-align:center; transform:translateY(-50%); pointer-events:none; }
+.phone-player.caption-top .clip-caption { top:13%; transform:none; }
+.phone-player.caption-bottom .clip-caption { top:auto; bottom:78px; transform:none; }
 .route-map-overlay { position:absolute; z-index:3; width:50%; aspect-ratio:1; overflow:visible; filter:drop-shadow(0 2px 3px rgba(0,0,0,.7)); pointer-events:none; }
 .route-map-overlay.map-top-left { top:10px; left:10px; }
 .route-map-overlay.map-top-right { top:10px; right:10px; }

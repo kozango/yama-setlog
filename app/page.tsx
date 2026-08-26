@@ -5,6 +5,7 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 type Ratio = "16:9" | "9:16" | "1:1";
 type LabelDensity = "none" | "major" | "detail";
 type MapPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+type CaptionPosition = "top" | "center" | "bottom";
 type GenerationState = "idle" | "exporting" | "ready" | "error";
 type PreviewMode = "clip" | "sequence";
 type GpxPoint = { index: number; lat: number; lon: number; ele: number; time: number; name: string | null };
@@ -34,6 +35,7 @@ export default function Home() {
   const [showRoute, setShowRoute] = useState(true);
   const [labelDensity, setLabelDensity] = useState<LabelDensity>("major");
   const [mapPosition, setMapPosition] = useState<MapPosition>("top-right");
+  const [captionPosition, setCaptionPosition] = useState<CaptionPosition>("bottom");
   const [showDateTime, setShowDateTime] = useState(true);
   const [showPlace, setShowPlace] = useState(true);
   const [gpxName, setGpxName] = useState("");
@@ -198,6 +200,7 @@ export default function Home() {
         showRoute,
         labelDensity,
         mapPosition,
+        captionPosition,
         showDateTime,
         showPlace,
         gpx: gpxData,
@@ -319,11 +322,12 @@ export default function Home() {
         {showRoute && <><div className="compact-label">地名</div><div className="choice-row three">{([{ value: "none", label: "なし" }, { value: "major", label: "主要地点" }, { value: "detail", label: "詳細" }] as { value: LabelDensity; label: string }[]).map(option => <button type="button" key={option.value} className={labelDensity === option.value ? "selected" : ""} onClick={() => { setLabelDensity(option.value); resetGeneration(); }}>{option.label}</button>)}</div></>}
         {showRoute && <><div className="compact-label">地図の位置</div><div className="choice-row four">{([{ value: "top-left", label: "左上" }, { value: "top-right", label: "右上" }, { value: "bottom-left", label: "左下" }, { value: "bottom-right", label: "右下" }] as { value: MapPosition; label: string }[]).map(option => <button type="button" key={option.value} className={mapPosition === option.value ? "selected" : ""} onClick={() => { setMapPosition(option.value); resetGeneration(); }}>{option.label}</button>)}</div></>}
         <div className="compact-label">表示する情報</div><div className="info-toggle-row"><button type="button" className={showDateTime ? "selected" : ""} aria-pressed={showDateTime} onClick={() => { setShowDateTime(value => !value); resetGeneration(); }}><span><strong>撮影日時</strong><small>動画内の時刻</small></span><i>{showDateTime ? "ON" : "OFF"}</i></button><button type="button" className={showPlace && hasNamedPlaces ? "selected" : ""} aria-pressed={showPlace && hasNamedPlaces} disabled={!hasNamedPlaces} onClick={() => { setShowPlace(value => !value); resetGeneration(); }}><span><strong>近くの地名</strong><small>{hasNamedPlaces ? "GPXから取得" : "GPXに地名なし"}</small></span><i>{showPlace && hasNamedPlaces ? "ON" : "OFF"}</i></button></div>
+        <div className="compact-label">キャプション位置</div><div className="choice-row three">{([{ value: "top", label: "上" }, { value: "center", label: "中央" }, { value: "bottom", label: "下" }] as { value: CaptionPosition; label: string }[]).map(option => <button type="button" key={option.value} className={captionPosition === option.value ? "selected" : ""} onClick={() => { setCaptionPosition(option.value); resetGeneration(); }}>{option.label}</button>)}</div>
       </section>
 
       <section className="phone-card preview-card">
         <div className="phone-step"><i>3</i><span><strong>完成イメージを確認</strong><small>書き出す前に{targetSeconds}秒をそのまま再生できます</small></span></div>
-        <div className={`phone-player ratio-${ratio.replace(":", "-")} map-${mapPosition}`}>{previewMedia?.url ? previewMedia.kind === "video" ? <video className="uploaded-media" key={`${previewMode}-${previewMedia.url}`} src={previewMedia.url} controls={previewMode === "clip"} playsInline autoPlay muted loop={previewMode === "sequence"} onEnded={() => { if (previewMode === "clip") movePreview(1); }} onLoadedMetadata={event => updateDuration(previewMedia.id, event.currentTarget.duration)} /> : <img className="uploaded-media" src={previewMedia.url} alt={previewMedia.name} /> : <div className="empty-player">動画を選択すると<br />ここで確認できます</div>}{showRoute && gpxData && <GpxRouteOverlay gpx={gpxData} current={previewMedia?.point ?? null} density={labelDensity} position={mapPosition} />}{previewMedia?.caption && <div className="clip-caption">{previewMedia.caption}</div>}{previewMedia && (showDateTime || showPlace) && <div className="capture-meta">{showDateTime && <time>{formatOutputDateTime(previewMedia.capturedAt)}</time>}{showPlace && previewMedia.placeName && <span>{previewMedia.placeName}付近</span>}</div>}</div>
+        <div className={`phone-player ratio-${ratio.replace(":", "-")} map-${mapPosition} caption-${captionPosition}`}>{previewMedia?.url ? previewMedia.kind === "video" ? <video className="uploaded-media" key={`${previewMode}-${previewMedia.url}`} src={previewMedia.url} controls={previewMode === "clip"} playsInline autoPlay muted loop={previewMode === "sequence"} onEnded={() => { if (previewMode === "clip") movePreview(1); }} onLoadedMetadata={event => updateDuration(previewMedia.id, event.currentTarget.duration)} /> : <img className="uploaded-media" src={previewMedia.url} alt={previewMedia.name} /> : <div className="empty-player">動画を選択すると<br />ここで確認できます</div>}{showRoute && gpxData && <GpxRouteOverlay gpx={gpxData} current={previewMedia?.point ?? null} density={labelDensity} position={mapPosition} />}{previewMedia?.caption && <div className="clip-caption">{previewMedia.caption}</div>}{previewMedia && (showDateTime || showPlace) && <div className="capture-meta">{showDateTime && <time>{formatOutputDateTime(previewMedia.capturedAt)}</time>}{showPlace && previewMedia.placeName && <span>{previewMedia.placeName}付近</span>}</div>}</div>
         <div className="preview-meta"><span>{previewMode === "sequence" ? "完成プレビュー" : previewMedia?.name || "素材未選択"}</span><b>{previewMedia ? `${selectedMedia.findIndex(item => item.id === previewMedia.id) + 1}/${selectedMedia.length}` : ""}</b></div>
         {previewMedia && previewMode === "clip" && <div className="caption-field"><span><strong>この素材のキャプション</strong><small>任意・空欄なら表示しません</small></span><input aria-label={`${previewMedia.name}のキャプション`} value={previewMedia.caption} maxLength={48} placeholder="例：朝日に染まる稜線" onChange={event => updateCaption(previewMedia.id, event.target.value)} /></div>}
         <div className="timeline active"><i style={{ width: previewMode === "sequence" ? `${sequenceProgress}%` : "0%" }} /></div><div className="time-row"><span>{previewMode === "sequence" ? formatClock(targetSeconds * sequenceProgress / 100) : "00:00"}</span><span>{totalTime}</span></div>
@@ -589,6 +593,7 @@ type ExportOptions = {
   showRoute: boolean;
   labelDensity: LabelDensity;
   mapPosition: MapPosition;
+  captionPosition: CaptionPosition;
   showDateTime: boolean;
   showPlace: boolean;
   gpx: GpxData;
@@ -626,7 +631,9 @@ async function exportMovie(options: ExportOptions) {
     for (const item of options.items) {
       if (options.isCancelled()) throw new Error("cancelled");
       if (item.kind === "image") {
+        if (recorder.state === "recording") recorder.pause();
         const image = await loadImage(item.url);
+        if (recorder.state === "paused") recorder.resume();
         await renderSegment(clipSeconds, time => {
           drawFrame(context, canvas, image, options, item);
           renderedSeconds += time;
@@ -640,16 +647,17 @@ async function exportMovie(options: ExportOptions) {
         video.style.cssText = "position:fixed;width:1px;height:1px;left:-10px;bottom:-10px;opacity:.01;pointer-events:none";
         document.body.appendChild(video);
         try {
+          if (recorder.state === "recording") recorder.pause();
           await waitForMedia(video, "loadedmetadata");
           const source = audioContext.createMediaElementSource(video);
           source.connect(audioDestination);
           video.currentTime = 0;
-          try {
-            await video.play();
-          } catch {
+          void video.play().catch(() => {
             video.muted = true;
-            await video.play();
-          }
+            void video.play().catch(() => undefined);
+          });
+          await waitForVideoPlayback(video);
+          if (recorder.state === "paused") recorder.resume();
           await renderSegment(clipSeconds, time => {
             if (video.ended || video.currentTime >= video.duration - 0.08) {
               video.currentTime = 0;
@@ -695,6 +703,19 @@ function waitForMedia(media: HTMLMediaElement, eventName: "loadedmetadata") {
   });
 }
 
+function waitForVideoPlayback(video: HTMLVideoElement, timeoutMs = 2000) {
+  if (!video.paused && video.readyState >= 2) return Promise.resolve();
+  return new Promise<void>(resolve => {
+    const finish = () => {
+      window.clearTimeout(timer);
+      video.removeEventListener("playing", finish);
+      resolve();
+    };
+    const timer = window.setTimeout(finish, timeoutMs);
+    video.addEventListener("playing", finish, { once: true });
+  });
+}
+
 function loadImage(url: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
@@ -732,7 +753,7 @@ function drawFrame(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement,
   const drawHeight = sourceHeight * scale;
   context.drawImage(source, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
   if (options.showRoute) drawRouteMap(context, canvas, options.gpx, item.point, options.labelDensity, options.mapPosition);
-  if (item.caption) drawCaption(context, canvas, item.caption, options.mapPosition);
+  if (item.caption) drawCaption(context, canvas, item.caption, options.captionPosition);
   if (options.showDateTime || options.showPlace) drawMetadata(context, canvas, item, options.showDateTime, options.showPlace);
 }
 
@@ -796,7 +817,7 @@ function drawRouteMap(context: CanvasRenderingContext2D, canvas: HTMLCanvasEleme
   context.restore();
 }
 
-function drawCaption(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, caption: string, mapPosition: MapPosition) {
+function drawCaption(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, caption: string, position: CaptionPosition) {
   const fontSize = Math.max(18, canvas.width * .042);
   const maxWidth = canvas.width * .78;
   context.save();
@@ -810,7 +831,7 @@ function drawCaption(context: CanvasRenderingContext2D, canvas: HTMLCanvasElemen
   const textWidth = Math.max(...lines.map(line => context.measureText(line).width));
   const boxWidth = textWidth + padX * 2;
   const boxHeight = lines.length * lineHeight + padY * 2;
-  const centerY = mapPosition.startsWith("bottom") ? canvas.height * .16 : canvas.height * .77;
+  const centerY = position === "top" ? canvas.height * .18 : position === "center" ? canvas.height * .5 : canvas.height * .77;
   context.fillStyle = "rgba(7,15,12,.68)";
   context.beginPath();
   context.roundRect((canvas.width - boxWidth) / 2, centerY - boxHeight / 2, boxWidth, boxHeight, fontSize * .45);
