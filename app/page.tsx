@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 type Ratio = "16:9" | "9:16" | "1:1";
 type LabelDensity = "none" | "major" | "detail";
@@ -63,6 +64,7 @@ export default function Home() {
   const gpxData = placeMerge?.data ?? null;
   const selectedMedia = useMemo(() => media.filter(item => item.selected), [media]);
   const previewMedia = selectedMedia.find(item => item.id === previewId) ?? selectedMedia[0];
+  const previewIndex = previewMedia ? selectedMedia.findIndex(item => item.id === previewMedia.id) : -1;
   const hasNamedPlaces = Boolean(gpxData?.points.some(point => point.name));
 
   const generationBusy = generationState === "exporting";
@@ -210,10 +212,13 @@ export default function Home() {
       if (generationRun.current !== run) return;
       const url = URL.createObjectURL(result.blob);
       outputUrl.current = url;
-      setOutput({ url, name: `yama-setlog.${result.extension}`, size: result.blob.size });
-      setPreviewId(selectedMedia[0].id);
-      setGenerationProgress(100);
-      setGenerationState("ready");
+      flushSync(() => {
+        setOutput({ url, name: `yama-setlog.${result.extension}`, size: result.blob.size });
+        setPreviewId(selectedMedia[0].id);
+        setGenerationProgress(100);
+        setGenerationState("ready");
+      });
+      window.scrollTo({ top: 0, behavior: "auto" });
     } catch (error) {
       if (generationRun.current !== run) return;
       setGenerationError(error instanceof Error ? error.message : "動画を書き出せませんでした。");
@@ -249,6 +254,7 @@ export default function Home() {
 
   function movePreview(direction: -1 | 1) {
     if (selectedMedia.length < 2 || !previewMedia) return;
+    stopSequence();
     const current = selectedMedia.findIndex(item => item.id === previewMedia.id);
     const next = (current + direction + selectedMedia.length) % selectedMedia.length;
     setPreviewId(selectedMedia[next].id);
@@ -284,11 +290,11 @@ export default function Home() {
     resetGeneration();
   }
 
-  if (generationState === "exporting") return <main className="phone-app"><header className="phone-header"><strong>山せとろぐ（仮）</strong></header><section className="processing-screen"><div className="processing-ring" style={{ "--progress": `${generationProgress * 3.6}deg` } as { "--progress": string }}><span>{generationProgress}%</span></div><h1>完成動画を書き出しています</h1><p>{targetSeconds}秒版は、およそ{targetSeconds}秒で完成します。<br />この画面を閉じずにお待ちください。</p><div className="generation-progress"><i style={{ width: `${generationProgress}%` }} /></div></section></main>;
+  if (generationState === "exporting") return <main className="phone-app"><header className="phone-header"><strong>山せとろぐ（仮）</strong></header><section className="processing-screen" aria-live="polite"><div className="processing-ring" style={{ "--progress": `${generationProgress * 3.6}deg` } as { "--progress": string }}><span>{generationProgress}%</span></div><h1>{generationProgress === 0 ? "素材を準備しています" : "完成動画を書き出しています"}</h1><p>{generationProgress === 0 ? "準備ができ次第、自動で書き出しを始めます。" : `あと約${Math.max(1, Math.ceil(targetSeconds * (100 - generationProgress) / 100))}秒です。`}<br />完成すると自動で保存画面に切り替わります。</p><div className="generation-progress"><i style={{ width: `${generationProgress}%` }} /></div></section></main>;
 
   if (generationState === "ready" && output) return <main className="phone-app">
     <header className="phone-header"><strong>山せとろぐ（仮）</strong></header>
-    <section className="result-screen">
+    <section className="result-screen" aria-live="polite">
       <span className="result-check">✓</span><h1>完成しました</h1><p>{targetSeconds}秒・{formatBytes(output.size)}</p>
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <video className="result-video" src={output.url} controls playsInline />
@@ -328,7 +334,11 @@ export default function Home() {
       <section className="phone-card preview-card">
         <div className="phone-step"><i>3</i><span><strong>完成イメージを確認</strong><small>書き出す前に{targetSeconds}秒をそのまま再生できます</small></span></div>
         <div className={`phone-player ratio-${ratio.replace(":", "-")} map-${mapPosition} caption-${captionPosition}`}>{previewMedia?.url ? previewMedia.kind === "video" ? <video className="uploaded-media" key={`${previewMode}-${previewMedia.url}`} src={previewMedia.url} controls={previewMode === "clip"} playsInline autoPlay muted loop={previewMode === "sequence"} onEnded={() => { if (previewMode === "clip") movePreview(1); }} onLoadedMetadata={event => updateDuration(previewMedia.id, event.currentTarget.duration)} /> : <img className="uploaded-media" src={previewMedia.url} alt={previewMedia.name} /> : <div className="empty-player">動画を選択すると<br />ここで確認できます</div>}{showRoute && gpxData && <GpxRouteOverlay gpx={gpxData} current={previewMedia?.point ?? null} density={labelDensity} position={mapPosition} />}{previewMedia?.caption && <div className="clip-caption">{previewMedia.caption}</div>}{previewMedia && (showDateTime || showPlace) && <div className="capture-meta">{showDateTime && <time>{formatOutputDateTime(previewMedia.capturedAt)}</time>}{showPlace && previewMedia.placeName && <span>{previewMedia.placeName}付近</span>}</div>}</div>
-        <div className="preview-meta"><span>{previewMode === "sequence" ? "完成プレビュー" : previewMedia?.name || "素材未選択"}</span><b>{previewMedia ? `${selectedMedia.findIndex(item => item.id === previewMedia.id) + 1}/${selectedMedia.length}` : ""}</b></div>
+        <div className="preview-nav" aria-label="確認する素材を切り替える">
+          <button type="button" onClick={() => movePreview(-1)} disabled={selectedMedia.length < 2} aria-label="前の素材を見る">‹ <span>前へ</span></button>
+          <div className="preview-meta"><span>{previewMode === "sequence" ? "完成プレビュー" : previewMedia?.name || "素材未選択"}</span><b>{previewMedia ? `${previewIndex + 1} / ${selectedMedia.length}` : ""}</b></div>
+          <button type="button" onClick={() => movePreview(1)} disabled={selectedMedia.length < 2} aria-label="次の素材を見る"><span>次へ</span> ›</button>
+        </div>
         {previewMedia && previewMode === "clip" && <div className="caption-field"><span><strong>この素材のキャプション</strong><small>任意・空欄なら表示しません</small></span><input aria-label={`${previewMedia.name}のキャプション`} value={previewMedia.caption} maxLength={48} placeholder="例：朝日に染まる稜線" onChange={event => updateCaption(previewMedia.id, event.target.value)} /></div>}
         <div className="timeline active"><i style={{ width: previewMode === "sequence" ? `${sequenceProgress}%` : "0%" }} /></div><div className="time-row"><span>{previewMode === "sequence" ? formatClock(targetSeconds * sequenceProgress / 100) : "00:00"}</span><span>{totalTime}</span></div>
         <button type="button" className="preview-action" onClick={startSequence} disabled={!selectedMedia.length}>{sequencePlaying ? `再生中 ${Math.round(sequenceProgress)}%` : `▶ ${targetSeconds}秒の完成イメージを見る`}</button>
